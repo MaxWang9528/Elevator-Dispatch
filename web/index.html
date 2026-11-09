@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elevator simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Elevator simulator</span>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button type="button" role="tab" id="tab-sim" aria-controls="view-sim" aria-selected="true">Simulation</button>
+      <button type="button" role="tab" id="tab-metrics" aria-controls="view-metrics" aria-selected="false" tabindex="-1">Metrics</button>
+      <button type="button" role="tab" id="tab-settings" aria-controls="view-settings" aria-selected="false" tabindex="-1">Settings</button>
+    </nav>
+  </header>
+
+  <!-- ===================== Simulation ===================== -->
+  <main class="app" id="view-sim" role="tabpanel" aria-labelledby="tab-sim">
+    <section class="tower" aria-label="Building cross-section">
+      <div class="tower-scroll" id="towerScroll">
+        <canvas id="tower" aria-label="Live elevator view. Click a floor to add a person there."></canvas>
+      </div>
+      <div class="banner" id="banner" role="alert" hidden></div>
+    </section>
+
+    <aside class="panel">
+      <header class="panel-head">
+        <p class="clock" id="clock" aria-label="Simulated time">0:00:00</p>
+        <p class="status" id="status" aria-live="polite">Connecting to the simulation…</p>
+      </header>
+
+      <div class="group">
+        <div class="inline">
+          <button type="button" class="btn btn-primary grow" id="playBtn">Pause</button>
+          <button type="button" class="btn" id="restartBtn">Restart</button>
+        </div>
+        <div class="speeds" id="speeds" role="radiogroup" aria-label="Simulation speed"></div>
+      </div>
+
+      <div class="group">
+        <label class="slider-label" for="rate">
+          <span>New people per minute</span>
+          <output id="rateOut" for="rate">20</output>
+        </label>
+        <input type="range" id="rate" min="0" max="120" step="1" value="20">
+      </div>
+
+      <dl class="stats group">
+        <div><dt>Waiting</dt><dd id="sWaiting">0</dd></div>
+        <div><dt>Riding</dt><dd id="sRiding">0</dd></div>
+        <div><dt>Delivered</dt><dd id="sArrived">0</dd></div>
+        <div><dt>Avg wait</dt><dd id="sMeanWait">–</dd></div>
+        <div><dt>Longest wait</dt><dd id="sMaxWait">–</dd></div>
+        <div><dt>Avg ride</dt><dd id="sMeanRide">–</dd></div>
+      </dl>
+      <p class="hint stats-hint" id="warmupHint" hidden></p>
+
+      <form class="group add-person" id="addForm">
+        <label for="addFloor">Add a person on floor</label>
+        <div class="inline">
+          <select id="addFloor" class="grow"></select>
+          <button type="submit" class="btn">Add person</button>
+        </div>
+        <p class="hint">Or click a floor in the building.</p>
+      </form>
+
+      <details class="group legend">
+        <summary>How to read it</summary>
+        <ul>
+          <li class="speed-key">
+            <span>Car color shows its speed</span>
+            <span class="speed-ramp" aria-hidden="true"></span>
+            <span class="speed-ends"><span>Stopped</span><span>Full speed</span></span>
+          </li>
+          <li><span class="sw sw-up"></span>Going up</li>
+          <li><span class="sw sw-down"></span>Going down</li>
+          <li><span class="sw sw-band"></span>Shaded floors are special floors, set in Settings</li>
+          <li><span class="sw sw-tri"></span>Lit triangles by the shafts are pressed call buttons</li>
+          <li><span class="sw sw-tick"></span>A colored notch on a shaft is a pickup assigned to that car</li>
+          <li><span class="sw sw-amber"></span>An amber dot is a floor pressed inside that car</li>
+          <li><span class="sw sw-door"></span>The bar on a car's left edge is its door; it shrinks as it opens</li>
+        </ul>
+      </details>
+    </aside>
+  </main>
+
+  <!-- ===================== Metrics ===================== -->
+  <main class="metrics-view" id="view-metrics" role="tabpanel" aria-labelledby="tab-metrics" hidden>
+    <div class="metrics">
+      <div class="metrics-head">
+        <div>
+          <h1>Metrics</h1>
+          <p id="mScope">Loading metrics…</p>
+        </div>
+        <div class="inline">
+          <a class="btn" href="/api/metrics?download=1" download>Download report (JSON)</a>
+          <a class="btn" href="/api/trips.csv" download>Download trips (CSV)</a>
+        </div>
+      </div>
+      <p class="notice" id="mNotice" role="status" hidden></p>
+
+      <div id="mBody">
+        <div class="tiles" id="mTiles"></div>
+
+        <section class="metrics-group" aria-labelledby="mgPassengers">
+          <h2 id="mgPassengers">Passengers</h2>
+          <p class="help">Times in seconds. A wait runs from pressing the hall button to boarding, and people who are still waiting count with their wait so far.</p>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr>
+                <th scope="col"><span class="visually-hidden">Measure</span></th>
+                <th scope="col" class="num">Average</th><th scope="col" class="num">Median</th>
+                <th scope="col" class="num">90th</th><th scope="col" class="num">95th</th>
+                <th scope="col" class="num">99th</th><th scope="col" class="num">Longest</th>
+                <th scope="col" class="num">People</th>
+              </tr></thead>
+              <tbody id="mPassengers"></tbody>
+            </table>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr>
+                <th scope="col"><span class="visually-hidden">Direction</span></th>
+                <th scope="col" class="num">People</th><th scope="col" class="num">Average wait</th>
+                <th scope="col" class="num">95th percentile wait</th><th scope="col" class="num">Average trip</th>
+              </tr></thead>
+              <tbody id="mDirections"></tbody>
+            </table>
+          </div>
+          <dl class="facts" id="mPassengerFacts"></dl>
+        </section>
+
+        <section class="metrics-group" aria-labelledby="mgTime">
+          <h2 id="mgTime">Over time</h2>
+          <figure class="chart" id="mWaitChart">
+            <figcaption><strong>Wait, by when people arrived</strong> People are grouped by when they pressed the button, in <span data-interval>5-minute</span> intervals. An interval appears once it has ended and the people who arrived in it have boarded.</figcaption>
+          </figure>
+          <figure class="chart" id="mQueueChart">
+            <figcaption><strong>People waiting</strong> The average number waiting across the building during each <span data-interval>5-minute</span> interval.</figcaption>
+          </figure>
+        </section>
+
+        <section class="metrics-group" aria-labelledby="mgFloors">
+          <h2 id="mgFloors">By floor</h2>
+          <figure class="chart" id="mFloorChart">
+            <figcaption><strong>Average wait by starting floor</strong> A floor with a much taller bar is being served worse than the rest.</figcaption>
+          </figure>
+        </section>
+
+        <section class="metrics-group" aria-labelledby="mgCalls">
+          <h2 id="mgCalls">Hall calls and queues</h2>
+          <p class="help">Response is the time from a hall button lighting to a car opening its doors there.</p>
+          <div class="facts-pair">
+            <dl class="facts" id="mCallFacts"></dl>
+            <dl class="facts" id="mQueueFacts"></dl>
+          </div>
+        </section>
+
+        <section class="metrics-group" aria-labelledby="mgCars">
+          <h2 id="mgCars">Elevators</h2>
+          <p class="help">Energy isn't modeled. Floors traveled and starts stand in for it: every start means accelerating the car again.</p>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr>
+                <th scope="col"><span class="visually-hidden">Car</span></th>
+                <th scope="col" class="num">Floors traveled</th><th scope="col" class="num">Empty travel</th>
+                <th scope="col" class="num">Starts</th><th scope="col" class="num">Stops</th>
+                <th scope="col" class="num">Moving</th><th scope="col" class="num">Doors</th>
+                <th scope="col" class="num">Idle</th><th scope="col" class="num">Riders at departure</th>
+                <th scope="col" class="num">Full departures</th><th scope="col" class="num">Peak load</th>
+                <th scope="col" class="num">Delivered</th>
+              </tr></thead>
+              <tbody id="mCars"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- ===================== Settings ===================== -->
+  <main class="settings-view" id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+    <form id="settingsForm" class="settings" novalidate>
+      <div class="settings-intro">
+        <h1>Settings</h1>
+        <p>Saved on the server in <code id="settingsFile">data/settings.json</code>, so they stay after restarts. Saving restarts the simulation from the beginning.</p>
+      </div>
+
+      <div id="settingsGroups"></div>
+
+      <section class="settings-group" aria-labelledby="sfTitle">
+        <h2 id="sfTitle">Special floors</h2>
+        <p class="help">Floors with their own purpose. A floor's share is the percentage of all trips that start or end there. Every other trip goes between two residents' floors.</p>
+        <div class="sf-scroll">
+          <table class="sf-table">
+            <thead>
+              <tr>
+                <th scope="col">Floor</th>
+                <th scope="col">Name</th>
+                <th scope="col">Type</th>
+                <th scope="col">Share of trips</th>
+                <th scope="col"><span class="visually-hidden">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody id="sfRows"></tbody>
+          </table>
+        </div>
+        <p class="sf-empty" id="sfEmpty" hidden>No special floors. Every trip goes between residents' floors.</p>
+        <div class="sf-foot">
+          <button type="button" class="btn" id="sfAdd">Add special floor</button>
+          <p class="sf-total" id="sfTotal" aria-live="polite"></p>
+        </div>
+        <p class="field-error" id="err-special_floors" hidden></p>
+      </section>
+
+      <div class="settings-actions">
+        <p class="settings-msg" id="settingsMsg" aria-live="polite"></p>
+        <div class="inline">
+          <button type="button" class="btn btn-quiet" id="restoreDefaults">Restore defaults</button>
+          <button type="button" class="btn" id="discardChanges">Discard changes</button>
+          <button type="submit" class="btn btn-primary">Save and restart</button>
+        </div>
+      </div>
+    </form>
+  </main>
+
+  <script src="renderer.js"></script>
+  <script src="settings.js"></script>
+  <script src="metrics.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

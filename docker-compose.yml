@@ -1,0 +1,12 @@
+services:
+  elevator-sim:
+    build: .
+    image: elevator-sim
+    ports:
+      - "8000:8000"
+    volumes:
+      - settings:/app/data    # keeps saved settings across rebuilds and restarts
+    restart: unless-stopped
+
+volumes:
+  settings:
