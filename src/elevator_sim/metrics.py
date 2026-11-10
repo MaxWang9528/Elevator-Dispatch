@@ -60,6 +60,13 @@ def distribution(values: Iterable[float]) -> dict[str, float | int | None]:
     }
 
 
+def percentiles(values: Iterable[float]) -> list[float]:
+    """Every whole percentile, 0th (fastest) to 100th (slowest), rounded to 0.1: 101 values,
+    or none when there are no values. For drawing a whole distribution."""
+    data = sorted(values)
+    return [round(percentile(data, q), 1) for q in range(101)] if data else []
+
+
 def _ratio(a: float, b: float, digits: int = 3) -> float | None:
     return round(a / b, digits) if b else None
 
@@ -280,7 +287,7 @@ class MetricsCollector:
         rides: list[float] = []
         trips: list[float] = []
         stops: list[int] = []
-        by_dir = {d: {"waits": [], "trips": []} for d in (Direction.UP, Direction.DOWN)}
+        by_dir = {d: {"waits": [], "trips": [], "stops": []} for d in (Direction.UP, Direction.DOWN)}
         floor_waits: list[list[float]] = [[] for _ in range(n_floors)]
         floor_to = [0] * n_floors
         bucket_waits: dict[int, list[float]] = {}
@@ -315,6 +322,7 @@ class MetricsCollector:
                 trip = p.arrive_time - p.spawn_time
                 trips.append(trip)
                 direction["trips"].append(trip)
+                direction["stops"].append(p.stops_en_route)
                 stops.append(p.stops_en_route)
                 index = self._bucket_index(p.arrive_time)
                 bucket_delivered[index] = bucket_delivered.get(index, 0) + 1
@@ -387,11 +395,16 @@ class MetricsCollector:
                 "wait": distribution(waits),
                 "ride": distribution(rides),
                 "trip": distribution(trips),
+                # The whole-trip time at each percentile, for the distribution chart.
+                "trip_percentiles": percentiles(trips),
                 "long_waits": int(long_waits),
                 "long_wait_share": _ratio(long_waits, len(waits)),
                 "left_behind_people": left_people,
                 "left_behind_events": left_events,
                 "stops_per_ride": round(fmean(stops), 2) if stops else None,
+                # Delivered riders whose car went straight to their floor, stopping nowhere else.
+                "straight_shots": stops.count(0),
+                "straight_shot_share": _ratio(stops.count(0), len(stops)),
             },
             "by_direction": {
                 d.name.lower(): {
@@ -399,6 +412,7 @@ class MetricsCollector:
                     "wait_mean": distribution(v["waits"])["mean"],
                     "wait_p95": distribution(v["waits"])["p95"],
                     "trip_mean": distribution(v["trips"])["mean"],
+                    "straight_shot_share": _ratio(v["stops"].count(0), len(v["stops"])),
                 }
                 for d, v in by_dir.items()
             },

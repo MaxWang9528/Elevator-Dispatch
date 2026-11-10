@@ -48,6 +48,8 @@ class Person:
     car_id: int | None = None      # the car they rode (set when boarding)
     stops_en_route: int = 0        # times their car stopped at a floor that wasn't theirs
     left_behind: int = 0           # times a car going their way closed its doors full
+    resident_id: int | None = None # which resident is making this trip (None: a visitor)
+    purpose: str = ""              # commute_out, commute_in, outing, outing_return, or "" (added by hand)
 
     def __post_init__(self) -> None:
         if self.origin_floor == self.requested_floor:

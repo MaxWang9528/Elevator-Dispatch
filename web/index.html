@@ -15,6 +15,7 @@
     <nav class="tabs" role="tablist" aria-label="Views">
       <button type="button" role="tab" id="tab-sim" aria-controls="view-sim" aria-selected="true">Simulation</button>
       <button type="button" role="tab" id="tab-metrics" aria-controls="view-metrics" aria-selected="false" tabindex="-1">Metrics</button>
+      <button type="button" role="tab" id="tab-import" aria-controls="view-import" aria-selected="false" tabindex="-1">Import</button>
       <button type="button" role="tab" id="tab-settings" aria-controls="view-settings" aria-selected="false" tabindex="-1">Settings</button>
     </nav>
   </header>
@@ -31,6 +32,7 @@
     <aside class="panel">
       <header class="panel-head">
         <p class="clock" id="clock" aria-label="Simulated time">0:00:00</p>
+        <p class="run-note" id="runNote">Time since the run began</p>
         <p class="status" id="status" aria-live="polite">Connecting to the simulation…</p>
       </header>
 
@@ -42,12 +44,34 @@
         <div class="speeds" id="speeds" role="radiogroup" aria-label="Simulation speed"></div>
       </div>
 
+      <section class="group" aria-labelledby="runTitle">
+        <h2 class="group-title" id="runTitle">Start a run</h2>
+        <div class="inline">
+          <button type="button" class="btn grow run-mode" id="runMorning" data-mode="morning">Morning rush<small id="runMorningHours"></small></button>
+          <button type="button" class="btn grow run-mode" id="runEvening" data-mode="evening">Evening rush<small id="runEveningHours"></small></button>
+        </div>
+        <form class="run-hours" id="runForm">
+          <input type="time" id="runStart" value="06:00" aria-label="Start time" required>
+          <span>to</span>
+          <input type="time" id="runStop" value="20:00" aria-label="Stop time" required>
+          <button type="submit" class="btn">Run</button>
+        </form>
+        <button type="button" class="btn run-mode" id="runSteady" data-mode="steady">Steady traffic<small>No time of day, no rush hours</small></button>
+        <p class="hint">Rush runs and chosen hours stop at their end time. Rush hours are set in Settings.</p>
+      </section>
+
       <div class="group">
         <label class="slider-label" for="rate">
-          <span>New people per minute</span>
-          <output id="rateOut" for="rate">20</output>
+          <span>Outings per resident per day</span>
+          <output id="rateOut" for="rate">1.5</output>
         </label>
-        <input type="range" id="rate" min="0" max="120" step="1" value="20">
+        <input type="range" id="rate" min="0" max="10" step="0.1" value="1.5">
+        <p class="hint" id="rateHint"></p>
+        <figure class="profile" id="profile" hidden>
+          <svg id="profileSvg" role="img" aria-labelledby="profileNow"></svg>
+          <div class="profile-ends"><span id="profileStart"></span><span id="profileStop"></span></div>
+          <figcaption id="profileNow"></figcaption>
+        </figure>
       </div>
 
       <dl class="stats group">
@@ -59,6 +83,7 @@
         <div><dt>Avg ride</dt><dd id="sMeanRide">–</dd></div>
       </dl>
       <p class="hint stats-hint" id="warmupHint" hidden></p>
+      <p class="hint stats-hint" id="residentsLine"></p>
 
       <form class="group add-person" id="addForm">
         <label for="addFloor">Add a person on floor</label>
@@ -83,26 +108,26 @@
           <li><span class="sw sw-tri"></span>Lit triangles by the shafts are pressed call buttons</li>
           <li><span class="sw sw-tick"></span>A colored notch on a shaft is a pickup assigned to that car</li>
           <li><span class="sw sw-amber"></span>An amber dot is a floor pressed inside that car</li>
-          <li><span class="sw sw-door"></span>The bar on a car's left edge is its door; it shrinks as it opens</li>
+          <li><span class="sw sw-door"></span>The black bar on a car's left edge is its door; it shrinks as it opens</li>
         </ul>
       </details>
     </aside>
   </main>
 
   <!-- ===================== Metrics ===================== -->
-  <main class="metrics-view" id="view-metrics" role="tabpanel" aria-labelledby="tab-metrics" hidden>
+  <!-- The Metrics layout. The Metrics and Import tabs each build theirs from this (see
+       MetricsView in metrics.js), so the two always look the same. Ids get a prefix per tab. -->
+  <template id="metricsLayout">
     <div class="metrics">
       <div class="metrics-head">
         <div>
-          <h1>Metrics</h1>
+          <h1 id="mTitle">Metrics</h1>
           <p id="mScope">Loading metrics…</p>
         </div>
-        <div class="inline">
-          <a class="btn" href="/api/metrics?download=1" download>Download report (JSON)</a>
-          <a class="btn" href="/api/trips.csv" download>Download trips (CSV)</a>
-        </div>
+        <div class="inline metrics-actions" id="mActions"></div>
       </div>
       <p class="notice" id="mNotice" role="status" hidden></p>
+      <p class="notice notice-info" id="mSource" hidden></p>
 
       <div id="mBody">
         <div class="tiles" id="mTiles"></div>
@@ -122,12 +147,16 @@
               <tbody id="mPassengers"></tbody>
             </table>
           </div>
+          <figure class="chart" id="mTripChart">
+            <figcaption><strong>Whole trip, by percentile</strong> Everyone's trip, from button press to arrival, sorted from fastest to slowest. Each step along the bottom is 1 percentile: at 90, 90% of people got there at least this fast.</figcaption>
+          </figure>
           <div class="table-scroll">
             <table class="data-table">
               <thead><tr>
                 <th scope="col"><span class="visually-hidden">Direction</span></th>
                 <th scope="col" class="num">People</th><th scope="col" class="num">Average wait</th>
                 <th scope="col" class="num">95th percentile wait</th><th scope="col" class="num">Average trip</th>
+                <th scope="col" class="num">Straight shots</th>
               </tr></thead>
               <tbody id="mDirections"></tbody>
             </table>
@@ -180,7 +209,30 @@
           </div>
         </section>
       </div>
+
     </div>
+  </template>
+
+  <main class="metrics-view" id="view-metrics" role="tabpanel" aria-labelledby="tab-metrics" hidden></main>
+
+  <!-- ===================== Import ===================== -->
+  <main class="metrics-view import-view" id="view-import" role="tabpanel" aria-labelledby="tab-import" hidden>
+    <div class="metrics import-start" id="importStart">
+      <h1>Import</h1>
+      <p class="lede">See the metrics of a run you saved earlier, laid out exactly like the Metrics tab. Import a report (JSON) or a trips file (CSV) from the Metrics tab's download buttons or the command-line tools.</p>
+      <div class="drop-zone" id="importDrop">
+        <p><strong>Drop a file here</strong> or</p>
+        <button type="button" class="btn btn-primary" id="importPick">Choose a file</button>
+        <p class="hint">A report has everything. A trips file has every passenger but doesn't record the elevators or hall buttons.</p>
+      </div>
+      <p class="import-msg" id="importMsg" role="status" aria-live="polite"></p>
+      <div class="import-recent" id="importRecent" hidden>
+        <h2>Imported before</h2>
+        <ul id="importList"></ul>
+      </div>
+    </div>
+    <div id="importShown" hidden></div>
+    <input type="file" id="importFile" accept=".csv,.json,text/csv,application/json" hidden>
   </main>
 
   <!-- ===================== Settings ===================== -->
@@ -195,7 +247,7 @@
 
       <section class="settings-group" aria-labelledby="sfTitle">
         <h2 id="sfTitle">Special floors</h2>
-        <p class="help">Floors with their own purpose. A floor's share is the percentage of all trips that start or end there. Every other trip goes between two residents' floors.</p>
+        <p class="help">Floors with their own purpose. A floor's share is the percentage of residents' outings that go there; the rest visit another resident's floor. Commutes leave and return through the Lobby and Parking / transit floors, split by their shares.</p>
         <div class="sf-scroll">
           <table class="sf-table">
             <thead>
@@ -210,7 +262,7 @@
             <tbody id="sfRows"></tbody>
           </table>
         </div>
-        <p class="sf-empty" id="sfEmpty" hidden>No special floors. Every trip goes between residents' floors.</p>
+        <p class="sf-empty" id="sfEmpty" hidden>No special floors. Every outing visits another resident's floor, and commutes use floor 1.</p>
         <div class="sf-foot">
           <button type="button" class="btn" id="sfAdd">Add special floor</button>
           <p class="sf-total" id="sfTotal" aria-live="polite"></p>
@@ -232,6 +284,7 @@
   <script src="renderer.js"></script>
   <script src="settings.js"></script>
   <script src="metrics.js"></script>
+  <script src="imports.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

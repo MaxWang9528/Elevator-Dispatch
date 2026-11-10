@@ -272,8 +272,8 @@ class TowerRenderer {
     // door: a bar on the corridor side that shrinks toward the middle as it opens
     const doorH = b.h * (1 - car.door);
     if (doorH > 0.5) {
-      ctx.fillStyle = c.ink;
-      ctx.fillRect(b.x, b.y + (b.h - doorH) / 2, 2.5, doorH);
+      ctx.fillStyle = "#fff";      // black in both themes, to stand out against any car color
+      ctx.fillRect(b.x, b.y + (b.h - doorH) / 2, 3, doorH);
     }
     // direction arrow, top-right corner
     if (car.dir !== "idle") {

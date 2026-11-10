@@ -1,7 +1,8 @@
 """The Simulation: owns the clock, the people, the building and the elevator manager.
 
 Each tick:
-  1. traffic sources spawn people (who join a floor queue and press the hall button)
+  1. traffic sources spawn people (who join a floor queue and press the hall button); in a run
+     with a time of day (`day_start`) their rate and trip mix can follow rush hours
   2. waiting people whose button isn't lit press it again (e.g. left behind by a full car)
   3. the manager assigns unassigned hall calls to cars
   4. each car steps; cars with open doors unload one person, else load one, else close
@@ -15,6 +16,7 @@ from collections.abc import Iterator
 from typing import Any, Protocol
 
 from .building import Building
+from .clock import DAY, format_time
 from .dispatchers import NearestCarDispatcher
 from .elevator import CarEvent, Elevator
 from .enums import CarState, Direction
@@ -24,6 +26,9 @@ from .person import Arrived, AtFloor, InCar, Person
 
 
 class TrafficSource(Protocol):
+    """Spawns people. A source may also define `on_arrive(sim, person)`, called whenever
+    someone gets off an elevator at their floor (residents use it to plan their way back)."""
+
     def step(self, sim: Simulation, dt: float) -> None: ...
 
 
@@ -38,6 +43,7 @@ class Simulation:
         metrics: MetricsCollector | None = None,
         seed: int = 0,
         dt: float = 0.1,
+        day_start: float | None = None,
     ) -> None:
         self.building = building
         self.manager = ElevatorManager(elevators, dispatcher or NearestCarDispatcher())
@@ -47,6 +53,10 @@ class Simulation:
         self.rng = random.Random(seed)
         self.dt = dt
         self.time = 0.0
+        self._ticks = 0
+        # The time of day at time 0, in seconds after midnight. None = this run has no time of
+        # day, so traffic stays at its baseline (no rush hours).
+        self.day_start = day_start
         self.people: dict[int, Person] = {}
         self._next_person_id = 0
         for car in elevators:
@@ -58,8 +68,14 @@ class Simulation:
     def elevators(self) -> list[Elevator]:
         return self.manager.elevators
 
+    @property
+    def time_of_day(self) -> float | None:
+        """Seconds after midnight right now, or None in a run without a time of day."""
+        return None if self.day_start is None else (self.day_start + self.time) % DAY
+
     # --- people ------------------------------------------------------------------------
-    def spawn_person(self, origin: int | None = None, destination: int | None = None) -> Person:
+    def spawn_person(self, origin: int | None = None, destination: int | None = None, *,
+                     resident_id: int | None = None, purpose: str = "") -> Person:
         """Add a person waiting at `origin` who wants `destination`; random where omitted."""
         n = len(self.building)
         if origin is None:
@@ -72,7 +88,8 @@ class Simulation:
             if not 0 <= f < n:
                 raise ValueError(f"floor {f} is outside the building (0..{n - 1})")
 
-        person = Person(self._next_person_id, origin, destination, self.time, AtFloor(origin))
+        person = Person(self._next_person_id, origin, destination, self.time, AtFloor(origin),
+                        resident_id=resident_id, purpose=purpose)
         self._next_person_id += 1
         self.people[person.id] = person
         self.building[origin].queue(person.direction).append(person)
@@ -106,10 +123,17 @@ class Simulation:
         person.location = Arrived(car.floor)
         person.arrive_time = self.time
         self.metrics.on_arrive(person, car, self.time)
+        for source in self.traffic:
+            hook = getattr(source, "on_arrive", None)
+            if hook is not None:
+                hook(self, person)
 
     # --- main loop ---------------------------------------------------------------------
     def step(self) -> None:
-        self.time += self.dt
+        # Counted in ticks, so times stay clean decimals (5400.1, not 5400.1000000003) and
+        # a saved trips file reproduces the live report exactly.
+        self._ticks += 1
+        self.time = round(self._ticks * self.dt, 6)
         for source in self.traffic:
             source.step(self, self.dt)
         for floor in self.building.floors:
@@ -213,8 +237,10 @@ class Simulation:
 
     def snapshot(self) -> dict[str, Any]:
         """Everything that changes, grouped by container, for one rendered frame."""
+        clock = self.time_of_day
         return {
             "t": round(self.time, 3),
+            "clock": None if clock is None else round(clock, 3),
             "cars": [
                 {
                     "id": c.id,
@@ -249,8 +275,9 @@ class Simulation:
         report = self.metrics.report(self.time, self.people.values(), self.building.floors,
                                      self.elevators, self.manager.hall_calls.values())
         report["run"] = {
-            "dispatcher": type(self.manager.dispatcher).__name__,
+            "dispatcher": getattr(self.manager.dispatcher, "name", type(self.manager.dispatcher).__name__),
             "seed": self.seed,
+            "day_start": self.day_start,
             "floors": len(self.building),
             "elevators": len(self.elevators),
         }
@@ -258,14 +285,21 @@ class Simulation:
 
     TRIP_COLUMNS = ("person", "from_floor", "to_floor", "direction", "status", "measured",
                     "spawn_time", "board_time", "arrive_time", "wait", "ride", "trip",
-                    "car", "stops_en_route", "left_behind")
+                    "car", "stops_en_route", "left_behind", "resident", "purpose", "spawn_clock",
+                    "dispatcher", "seed", "warmup", "long_wait", "chart_interval", "run_time")
 
     def trip_rows(self) -> Iterator[tuple[Any, ...]]:
         """One row per person (columns: TRIP_COLUMNS), for analysis outside the simulator.
-        `wait` is blank until the person boards; times are simulated seconds."""
+        `wait` is blank until the person boards; times are simulated seconds since the run
+        began, and `spawn_clock` is the time of day they pressed the button (timed runs only).
+        The last six columns are the same on every row: the run's algorithm, seed and metric
+        settings, and how far it had got, so the file can be imported again on its own."""
         def num(value: float | None) -> float | str:
             return "" if value is None else round(value, 2)
 
+        m = self.metrics
+        run = (getattr(self.manager.dispatcher, "name", type(self.manager.dispatcher).__name__), self.seed,
+               m.warmup, m.long_wait, m.bucket_seconds, round(self.time, 1))
         for p in self.people.values():
             status = "waiting" if p.board_time is None else "riding" if p.arrive_time is None else "delivered"
             yield (
@@ -274,6 +308,9 @@ class Simulation:
                 num(p.spawn_time), num(p.board_time), num(p.arrive_time),
                 num(p.wait_time), num(p.ride_time), num(p.trip_time),
                 "" if p.car_id is None else p.car_id, p.stops_en_route, p.left_behind,
+                "" if p.resident_id is None else p.resident_id, p.purpose,
+                "" if self.day_start is None else format_time(self.day_start + p.spawn_time, with_seconds=True),
+                *run,
             )
 
     # --- debugging ---------------------------------------------------------------------

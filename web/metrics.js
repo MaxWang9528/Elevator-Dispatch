@@ -1,4 +1,4 @@
-// The Metrics tab: polls /api/metrics while visible and draws tiles, tables and three charts.
+// The Metrics tab: polls /api/metrics while visible and draws tiles, tables and four charts.
 // Charts are plain SVG. Each has a hover/keyboard readout and a "Show as table" twin.
 "use strict";
 
@@ -27,10 +27,10 @@ const fmt = {
     const s = Math.round(v);
     return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
   },
-  /** Simulated clock without seconds: 1:05 */
+  /** Clock without seconds: 1:05 */
   clock(t) {
     const m = Math.round(t / 60);
-    return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+    return `${Math.floor(m / 60) % 24}:${String(m % 60).padStart(2, "0")}`;
   },
   clockSecs(t) {
     const s = Math.round(t);
@@ -143,10 +143,15 @@ class Chart {
   indexAt(evt) {
     if (!this.g || !this.g.n) return null;
     const px = evt.clientX - this.svg.getBoundingClientRect().left;
-    const { m, plotW, slot, n } = this.g;
+    const { m, plotW, slot, n, x } = this.g;
     if (px < m.l - 8 || px > m.l + plotW + 8) return null;
-    const i = Math.max(0, Math.min(n - 1, Math.floor((px - m.l) / slot)));
-    return i;
+    if (this.opts.type === "line") {
+      // The nearest point, so the crosshair lands on the point under the pointer.
+      let best = 0;
+      for (let i = 1; i < n; i++) if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i;
+      return best;
+    }
+    return Math.max(0, Math.min(n - 1, Math.floor((px - m.l) / slot)));
   }
 
   onKey(e) {
@@ -184,12 +189,20 @@ class Chart {
       parts.push(svgEl("text", { x: m.l - 8, y: gy + 4, class: "chart-tick", "text-anchor": "end" }, axis.label(v)));
     }
 
-    // x labels, thinned so they never collide
+    // x labels, thinned so they never collide. `xTickSteps` (in rows) keeps labels on round
+    // numbers; `minorTicks` marks every row on the axis, when they are far enough apart.
     if (n) {
-      const every = Math.max(1, Math.ceil((opts.type === "bar" ? 22 : 52) / g.slot));
+      let every = Math.max(1, Math.ceil((opts.type === "bar" ? 22 : 52) / g.slot));
+      if (opts.xTickSteps) every = opts.xTickSteps.find((s) => s * g.slot >= 36) ?? opts.xTickSteps.at(-1);
+      const minorEvery = g.slot >= 3 ? 1 : 5;
+      const base = Math.round(y(0)) + 0.5;
       rows.forEach((row, i) => {
-        if (i % every) return;
         const tx = opts.type === "bar" ? x(i) : x.time(row.t0);
+        if (opts.minorTicks && i % minorEvery === 0) {
+          const px = Math.round(tx) + 0.5;
+          parts.push(svgEl("line", { x1: px, x2: px, y1: base, y2: base + (i % every ? 3 : 6), class: "chart-axis" }));
+        }
+        if (i % every) return;
         parts.push(svgEl("text", { x: tx, y: this.height - 8, class: "chart-tick", "text-anchor": "middle" }, opts.xTick(row)));
       });
     }
@@ -304,18 +317,38 @@ class Chart {
 }
 
 // ---- the view ------------------------------------------------------------------------------
+/**
+ * Builds the Metrics layout (the #metricsLayout template) into `root` and fills it from a report.
+ * The Metrics tab shows the live run; the Import tab shows a saved one. `prefix` keeps the ids of
+ * each copy apart; `title` and `actions` (elements) fill the head.
+ */
 class MetricsView {
-  constructor() {
+  constructor(root, { prefix, title, actions = [] }) {
     this.timer = null;
     this.active = false;
-    this.scope = document.getElementById("mScope");
-    this.notice = document.getElementById("mNotice");
-    this.body = document.getElementById("mBody");
+    this.prefix = prefix;
+    // Seconds added to simulated time before it is shown: the run's starting time of day in a
+    // timed run (so charts read 7:30, not 1:00 into the run), 0 in a steady run.
+    this.dayStart = 0;
+
+    const layout = document.getElementById("metricsLayout").content.cloneNode(true);
+    for (const node of layout.querySelectorAll("[id]")) node.id = prefix + node.id;
+    for (const node of layout.querySelectorAll("[aria-labelledby]")) {
+      node.setAttribute("aria-labelledby", prefix + node.getAttribute("aria-labelledby"));
+    }
+    root.replaceChildren(layout);
+    this.root = root;
+    this.$("mTitle").textContent = title;
+    this.$("mActions").replaceChildren(...actions);
+    this.scope = this.$("mScope");
+    this.notice = this.$("mNotice");
+    this.source = this.$("mSource");
+    this.body = this.$("mBody");
 
     const secs = (v) => fmt.dec(v);
-    const bucketTitle = (b) => `${fmt.clock(b.t0)} to ${fmt.clock(b.t1)}`;
+    const bucketTitle = (b) => `${this.clock(b.t0)} to ${this.clock(b.t1)}`;
     const timeColumns = [
-      { title: "Interval starts", get: (b) => fmt.clock(b.t0) },
+      { title: "Interval starts", get: (b) => this.clock(b.t0) },
       { title: "People arriving", get: (b) => fmt.int(b.arrived), num: true },
       { title: "Delivered", get: (b) => fmt.int(b.delivered), num: true },
       { title: "Average wait (s)", get: (b) => secs(b.wait_mean), num: true },
@@ -323,32 +356,51 @@ class MetricsView {
       { title: "Waiting, average", get: (b) => fmt.dec(b.avg_waiting), num: true },
       { title: "Waiting, peak", get: (b) => fmt.int(b.peak_waiting), num: true },
     ];
-    this.waitChart = new Chart(document.getElementById("mWaitChart"), {
+    const ordinal = (q) => {
+      const tens = q % 100, ones = q % 10;
+      const suffix = tens >= 11 && tens <= 13 ? "th" : ones === 1 ? "st" : ones === 2 ? "nd" : ones === 3 ? "rd" : "th";
+      return `${q}${suffix}`;
+    };
+    this.tripChart = new Chart(this.$("mTripChart"), {
+      type: "line", yKind: "time", minorTicks: true, xTickSteps: [10, 20, 25, 50, 100],
+      label: "Line chart of whole-trip time at each percentile, from fastest to slowest",
+      series: [{ key: "trip", name: "whole trip", color: "--series-1" }],
+      xTick: (row) => String(row.q),
+      tipTitle: (row) => `${ordinal(row.q)} percentile${row.q === 0 ? ", fastest" : row.q === 100 ? ", slowest" : ""}`,
+      tipValue: fmt.secs,
+      tipExtra: (row) => (row.q < 100 ? [["of people took longer", `${100 - row.q}%`]] : []),
+      columns: [
+        { title: "Percentile", get: (row) => ordinal(row.q) },
+        { title: "Whole trip (s)", get: (row) => fmt.dec(row.trip), num: true },
+      ],
+      empty: "No one has finished a trip yet.",
+    });
+    this.waitChart = new Chart(this.$("mWaitChart"), {
       type: "line", yKind: "time", endLabels: true,
       label: "Line chart of average and 95th percentile wait, by when people arrived",
       series: [
         { key: "wait_mean", name: "Average", color: "--series-1" },
         { key: "wait_p95", name: "95th percentile", color: "--series-2" },
       ],
-      xTick: (b) => fmt.clock(b.t0),
+      xTick: (b) => this.clock(b.t0),
       tipTitle: bucketTitle,
       tipValue: fmt.secs,
       tipExtra: (b) => [["people arriving", fmt.int(b.arrived)]],
       columns: timeColumns,
       empty: "The first interval hasn't settled yet.",
     });
-    this.queueChart = new Chart(document.getElementById("mQueueChart"), {
+    this.queueChart = new Chart(this.$("mQueueChart"), {
       type: "line", yKind: "count", area: true, padRight: 112,
       label: "Line chart of the average number of people waiting over time",
       series: [{ key: "avg_waiting", name: "waiting on average", color: "--series-1" }],
-      xTick: (b) => fmt.clock(b.t0),
+      xTick: (b) => this.clock(b.t0),
       tipTitle: bucketTitle,
       tipValue: (v) => fmt.dec(v),
       tipExtra: (b) => [["at the busiest moment", fmt.int(b.peak_waiting)], ["delivered", fmt.int(b.delivered)]],
       columns: timeColumns,
       empty: "The first interval hasn't settled yet.",
     });
-    this.floorChart = new Chart(document.getElementById("mFloorChart"), {
+    this.floorChart = new Chart(this.$("mFloorChart"), {
       type: "bar", yKind: "time",
       label: "Bar chart of average wait for each starting floor",
       series: [{ key: "wait_mean", name: "average wait", color: "--series-1" }],
@@ -370,7 +422,14 @@ class MetricsView {
     });
   }
 
-  /** Poll only while the tab is showing. */
+  $(id) {
+    return document.getElementById(this.prefix + id);
+  }
+
+  clock(t) { return fmt.clock(t + this.dayStart); }
+  clockSecs(t) { return fmt.clockSecs(t + this.dayStart); }
+
+  /** Poll the live run, only while the tab is showing. */
   setActive(on) {
     if (on === this.active) return;
     this.active = on;
@@ -394,16 +453,26 @@ class MetricsView {
   render(r) {
     const p = r.passengers, s = r.system, f = r.fleet, hc = r.hall_calls;
     const interval = `${r.bucket_seconds / 60}-minute`;
+    const timed = r.run.day_start !== null && r.run.day_start !== undefined;
+    this.dayStart = timed ? r.run.day_start : 0;
+    const clockKind = timed ? "" : " of simulated time";
+    const runName = (r.run.description || "steady traffic").replace(/^./, (c) => c.toUpperCase());
+    const algorithm = r.run.dispatcher_label || r.run.dispatcher;
+    const who = [algorithm ? `Algorithm: ${algorithm}` : "Algorithm not recorded",
+                 r.run.seed !== null && r.run.seed !== undefined ? `seed ${r.run.seed}` : null]
+      .filter(Boolean).join(", ");
 
     if (r.warming_up) {
-      this.scope.textContent = `Warming up. Measuring starts at ${fmt.clockSecs(r.warmup)} of simulated time, `
-        + `so the start from an empty building doesn't skew the numbers. It is now ${fmt.clockSecs(r.time)}. `
+      this.scope.textContent = `${runName}. Warming up: measuring starts at ${this.clockSecs(r.warmup)}${clockKind}, `
+        + `so the start from an empty building doesn't skew the numbers. It is now ${this.clockSecs(r.time)}. `
         + "Change the warm-up period in Settings.";
     } else {
-      this.scope.textContent = `Measuring since ${fmt.clockSecs(r.warmup)} of simulated time: `
-        + `${fmt.int(p.measured)} people over ${fmt.span(r.measured_seconds)}. `
-        + `Algorithm ${r.run.dispatcher}, seed ${r.run.seed}.`;
+      this.scope.textContent = `${runName}. Measuring since ${this.clockSecs(r.warmup)}${clockKind}: `
+        + `${fmt.int(p.measured)} people over ${fmt.span(r.measured_seconds)}. ${who}.`;
     }
+    const missing = r.source && r.source.missing && r.source.missing.length;
+    this.source.hidden = !missing;
+    if (missing) this.source.textContent = r.source.note;
     this.body.classList.toggle("is-warming", r.warming_up);
 
     this.notice.hidden = !s.overloaded;
@@ -419,20 +488,31 @@ class MetricsView {
       [`Waits over ${r.long_wait} s`, fmt.pct(p.long_wait_share), `${fmt.int(p.long_waits)} of ${fmt.int(p.measured)} people`],
       ["Average trip", fmt.secs(p.trip.mean), "button press to arrival"],
       ["Delivered per hour", fmt.int(s.delivered_per_hour), `${fmt.int(s.arrivals_per_hour)} arriving per hour`],
-      ["Floors traveled per person", fmt.dec(f.floors_per_delivery), `${fmt.pct(f.empty_share)} of travel is empty`],
+      ["Floors traveled per person", fmt.dec(f.floors_per_delivery),
+        f.empty_share === null || f.empty_share === undefined ? "not in this file" : `${fmt.pct(f.empty_share)} of travel is empty`],
     ]);
 
     const distRow = (name, d) => [name, fmt.dec(d.mean), fmt.dec(d.p50), fmt.dec(d.p90), fmt.dec(d.p95),
                                   fmt.dec(d.p99), fmt.dec(d.max), fmt.int(d.n)];
     this.table("mPassengers", [distRow("Wait", p.wait), distRow("Ride", p.ride), distRow("Whole trip", p.trip)]);
+    // Reports saved before this chart existed don't have the percentiles.
+    const tripPercentiles = p.trip_percentiles;
+    this.tripChart.emptyEl.textContent = tripPercentiles || !p.delivered
+      ? "No one has finished a trip yet."
+      : "This report was saved before trip percentiles were recorded. Import its trips file (CSV) to see this chart.";
+    this.tripChart.setData((tripPercentiles || []).map((trip, q) => ({ t0: q, t1: q, q, trip })));
     this.table("mDirections", Object.entries(r.by_direction).map(([name, d]) =>
-      [name === "up" ? "Going up" : "Going down", fmt.int(d.people), fmt.dec(d.wait_mean), fmt.dec(d.wait_p95), fmt.dec(d.trip_mean)]));
+      [name === "up" ? "Going up" : "Going down", fmt.int(d.people), fmt.dec(d.wait_mean), fmt.dec(d.wait_p95),
+       fmt.dec(d.trip_mean), fmt.pct(d.straight_shot_share)]));
     this.facts("mPassengerFacts", [
       ["Still waiting", fmt.int(p.waiting)],
       ["Riding now", fmt.int(p.riding)],
       ["Delivered", fmt.int(p.delivered)],
       ["Left behind by a full car", `${fmt.int(p.left_behind_people)} people, ${fmt.int(p.left_behind_events)} times`],
       ["Other stops during a ride, average", fmt.dec(p.stops_per_ride, 2)],
+      ["Straight shots", p.delivered
+        ? `${fmt.pct(p.straight_shot_share)}, ${fmt.int(p.straight_shots)} of ${fmt.int(p.delivered)} delivered`
+        : fmt.none],
     ]);
     this.facts("mCallFacts", [
       ["Hall calls answered", fmt.int(hc.answered)],
@@ -452,14 +532,15 @@ class MetricsView {
 
     const carRow = (name, c, capacity) => [name, fmt.int(c.distance), fmt.pct(c.empty_share), fmt.int(c.starts),
       fmt.int(c.door_cycles), fmt.pct(c.share_moving), fmt.pct(c.share_doors), fmt.pct(c.share_idle),
-      fmt.dec(c.avg_load_departing), fmt.pct(c.full_departure_share), `${c.peak_load} of ${capacity}`, fmt.int(c.delivered)];
+      fmt.dec(c.avg_load_departing), fmt.pct(c.full_departure_share),
+      c.peak_load === null || c.peak_load === undefined ? fmt.none : `${c.peak_load} of ${capacity}`, fmt.int(c.delivered)];
     const capacity = r.cars.length ? Math.max(...r.cars.map((c) => c.capacity)) : 0;
     this.table("mCars", [
       ...r.cars.map((c) => carRow(`Car ${c.id + 1}`, c, c.capacity)),
       carRow("All cars", f, capacity),
     ], true);
 
-    for (const node of document.querySelectorAll("[data-interval]")) node.textContent = interval;
+    for (const node of this.root.querySelectorAll("[data-interval]")) node.textContent = interval;
     // Plot settled intervals only. While an interval's latest arrivals are still waiting, their
     // waits-so-far are short, which would draw a misleading dive at the right edge.
     const finished = r.timeline.filter((b) => b.settled);
@@ -469,14 +550,14 @@ class MetricsView {
   }
 
   tiles(items) {
-    document.getElementById("mTiles").replaceChildren(...items.map(([label, value, note]) =>
+    this.$("mTiles").replaceChildren(...items.map(([label, value, note]) =>
       el("div", { class: "tile" }, el("p", { class: "tile-label" }, label),
         el("p", { class: "tile-value" }, value), el("p", { class: "tile-note" }, note))));
   }
 
   /** Fill a table body; the first cell of each row is its header. */
   table(id, rows, lastIsTotal = false) {
-    document.getElementById(id).replaceChildren(...rows.map((cells, i) => {
+    this.$(id).replaceChildren(...rows.map((cells, i) => {
       const tr = el("tr", { class: lastIsTotal && i === rows.length - 1 ? "is-total" : null },
         el("th", { scope: "row" }, cells[0]), ...cells.slice(1).map((c) => el("td", { class: "num" }, c)));
       return tr;
@@ -484,7 +565,7 @@ class MetricsView {
   }
 
   facts(id, pairs) {
-    document.getElementById(id).replaceChildren(...pairs.map(([label, value]) =>
+    this.$(id).replaceChildren(...pairs.map(([label, value]) =>
       el("div", {}, el("dt", {}, label), el("dd", {}, value))));
   }
 }

@@ -190,6 +190,80 @@ body {
   border-top: 1px solid var(--rule);
 }
 
+.run-note {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.group-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* starting a run */
+.run-mode[aria-pressed="true"] {
+  border-color: var(--amber);
+  box-shadow: inset 0 -3px 0 var(--amber);
+}
+.run-mode small {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.run-hours {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-hours input {
+  flex: 1;
+  padding-left: 6px;
+  padding-right: 4px;
+  font-size: 14px;
+}
+/* The panel is narrow: typing the time is enough here, so drop the picker icon. */
+.run-hours input::-webkit-calendar-picker-indicator { display: none; }
+
+/* traffic over a timed run */
+.profile { margin: 4px 0 0; }
+.profile svg {
+  display: block;
+  width: 100%;
+  height: 54px;
+  overflow: visible;
+}
+.profile-area { fill: var(--series-1); opacity: 0.12; }
+.profile-line {
+  fill: none;
+  stroke: var(--series-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.profile-base {
+  stroke: var(--axis);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.profile-now { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.profile-dot { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+.profile-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.profile figcaption {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* buttons */
 .btn {
   font: 500 15px/1 var(--font-ui);
@@ -222,22 +296,24 @@ body {
 }
 
 .speeds {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  display: flex;
   border: 1px solid var(--rule);
   border-radius: 6px;
   overflow: hidden;
 }
 .speeds button {
+  flex: 1 1 0;
+  min-width: 0;
   padding: 7px 0;
   border: 0;
   border-left: 1px solid var(--rule);
   background: transparent;
   color: var(--ink);
-  font: 600 16px/1 var(--font-num);
+  font: 600 15px/1 var(--font-num);
   cursor: pointer;
 }
 .speeds button:first-child { border-left: 0; }
+.speeds button[data-speed="max"] { flex: 2 1 0; }
 .speeds button:hover { background: var(--hover); }
 .speeds button[aria-checked="true"] {
   background: var(--amber);
@@ -278,7 +354,7 @@ input[type="range"] {
 
 /* forms */
 .inline { display: flex; gap: 8px; }
-select, input[type="number"], input[type="text"] {
+select, input[type="number"], input[type="text"], input[type="time"] {
   font: 15px var(--font-ui);
   padding: 7px 8px;
   border: 1px solid var(--rule);
@@ -489,6 +565,48 @@ a.btn { text-decoration: none; display: inline-block; }
 .chart-table summary { color: var(--muted); font-weight: 400; }
 .chart-table .data-table { margin-top: 8px; }
 
+/* import tab */
+.notice-info { border-left-color: var(--muted); }
+.import-view.is-dropping { background: var(--hover); }
+.import-start h1 { margin: 0 0 6px; font: 600 34px/1.1 var(--font-num); }
+.lede { margin: 0 0 24px; max-width: 62ch; color: var(--muted); }
+.drop-zone {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 28px 24px;
+  border: 2px dashed var(--rule);
+  border-radius: 8px;
+}
+.import-view.is-dropping .drop-zone { border-color: var(--amber); }
+.drop-zone p { margin: 0; }
+.import-msg { margin: 14px 0 0; min-height: 1.45em; color: var(--muted); }
+.import-msg.is-error { color: var(--down); }
+.import-recent { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.import-recent h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; }
+.import-recent ul { list-style: none; margin: 0; padding: 0; }
+.import-recent li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--floor-line);
+}
+.import-open {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.import-open:hover .import-name { text-decoration: underline; }
+.import-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.import-meta { display: block; font-size: 14px; color: var(--muted); }
+.metrics-actions { flex-wrap: wrap; }
+
 /* ---- settings view ---- */
 .settings-view {
   overflow-y: auto;
@@ -544,7 +662,15 @@ code {
   gap: 8px;
   align-self: start;
 }
-.field-input input { width: 100%; }
+.field-input input, .field-input select { width: 100%; }
+.field-input input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0;
+  accent-color: var(--amber);
+}
+.field.is-off label, .field.is-off .help, .field.is-off .unit { color: var(--muted); opacity: 0.7; }
+input:disabled { opacity: 0.55; }
 .unit { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .help {
   margin: 0;
@@ -646,7 +772,7 @@ code {
 }
 .sw-tick { width: 4px; height: 12px; background: var(--down); box-shadow: 4px 0 0 var(--shaft); }
 .sw-amber { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 3px var(--shaft); }
-.sw-door { width: 14px; height: 10px; background: var(--car); border-left: 3px solid var(--ink); }
+.sw-door { width: 14px; height: 10px; background: var(--car); border-left: 3px solid #000; }
 .sw-band { width: 16px; height: 10px; background: var(--lobby); border: 1px solid var(--rule); }
 .legend li.speed-key { grid-template-columns: 1fr; gap: 4px; }
 .speed-ramp {

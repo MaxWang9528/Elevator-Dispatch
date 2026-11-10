@@ -26,7 +26,12 @@ class HallCall:
 
 
 class Dispatcher(Protocol):
-    """Decides which car takes a hall call. Swap this to try different algorithms."""
+    """Decides which car takes a hall call. Swap this to try different algorithms.
+
+    A dispatcher may also define `step(manager, now)`. The manager calls it every tick after
+    handing out new calls, so it can move calls between cars (`manager.assign`) or send idle
+    cars somewhere to wait (`car.park_floor`).
+    """
 
     def assign(self, call: HallCall, manager: ElevatorManager) -> Elevator | None:
         """Return the car to send, or None to leave the call unassigned for now."""
@@ -41,6 +46,7 @@ class ElevatorManager:
         self.elevators = elevators
         self.dispatcher = dispatcher
         self.hall_calls: dict[tuple[int, Direction], HallCall] = {}
+        self.now = 0.0
 
     def is_lit(self, floor: int, direction: Direction) -> bool:
         return (floor, direction) in self.hall_calls
@@ -53,18 +59,24 @@ class ElevatorManager:
         return self.hall_calls[key]
 
     def step(self, now: float) -> None:
-        """Hand any unassigned calls to the dispatcher."""
+        """Hand any unassigned calls to the dispatcher, then let it do anything else it does."""
+        self.now = now
         for call in list(self.hall_calls.values()):
             if call.assigned_to is None:
                 car = self.dispatcher.assign(call, self)
                 if car is not None:
                     self.assign(call, car)
+        hook = getattr(self.dispatcher, "step", None)
+        if hook is not None:
+            hook(self, now)
 
     def assign(self, call: HallCall, car: Elevator) -> None:
+        """Give a call to a car, taking it from the car that had it, if any."""
         if call.assigned_to is not None:
             self.elevators[call.assigned_to].hall_stops.discard(call.key)
         call.assigned_to = car.id
         car.hall_stops.add(call.key)
+        car.park_floor = None
 
     def call_served(self, floor: int, direction: Direction) -> HallCall | None:
         """A car opened its doors here going this way: turn the button off, whoever came.

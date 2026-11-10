@@ -3,12 +3,18 @@
     python -m elevator_sim.server [--host 127.0.0.1] [--port 8000] [--settings data/settings.json]
 
 GET  /                      the web app (files from web/)
-GET  /api/stream            Server-Sent Events: a "layout" event, then a "frame" event ~15x a second
-POST /api/control           {"paused": bool} | {"speed": number} | {"rate": people_per_minute}
+GET  /api/stream            Server-Sent Events: a "layout" event, a "profile" event (the expected-traffic curve; again whenever outings per day change), then a "frame" event ~15x a second
+POST /api/control           {"paused": bool} | {"speed": number or "max"} | {"outings": per resident per day}
 POST /api/spawn             {"origin": floor index, "destination": floor index (optional)}
-POST /api/restart           start the current settings over from time 0
+POST /api/restart           start the current run over from its beginning
+POST /api/run               start a new run: {"mode": "steady"} | {"mode": "morning"} |
+                            {"mode": "evening"} | {"mode": "custom", "start": "06:00", "stop": "20:00"}
 GET  /api/metrics           every metric as JSON (add ?download=1 to save it as a file)
+                            Downloads are named after the algorithm and the simulated time
+                            covered so far, e.g. lookahead_day_0600-1432_report.json
 GET  /api/trips.csv         one row per person, for analysis elsewhere
+POST /api/import?name=FILE  a saved report JSON or trips CSV as the body -> {"report": ...}, the same
+                            shape as /api/metrics, for the Import tab (nothing is kept on the server)
 GET  /api/settings          saved settings + the schema the Settings tab is built from
 POST /api/settings          validate, save to disk, restart the simulation
 POST /api/settings/defaults restore defaults, save, restart
@@ -17,6 +23,8 @@ POST /api/settings/defaults restore defaults, save, restart
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import random
 import csv
 import io
 import json
@@ -25,20 +33,30 @@ import mimetypes
 import threading
 import time
 import traceback
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from .settings import SPECIAL_KINDS, Settings, SettingsError, SettingsStore, make_simulation
+from .clock import DAY, RunPlan, parse_time
+from .dispatchers import DISPATCHERS
+from .imports import MAX_BYTES, ImportFileError, report_from_file
+from .settings import (
+    GROUP_HELP, RUSH_NAMES, SPECIAL_KINDS, Settings, SettingsError, SettingsStore, make_simulation,
+)
 
 log = logging.getLogger("elevator_sim.server")
 
 FRAME_SECONDS = 1 / 15          # how often frames are sent to browsers (wall clock)
-SPEEDS = (1, 2, 5, 10, 30, 60, 120)
+FASTEST = "max"                 # a speed: simulate as fast as this computer can
+SPEEDS: tuple[float | str, ...] = (1, 2, 5, 10, 20, 100, 200, FASTEST)
+FASTEST_CHUNK = 20              # steps between letting other threads in, at the fastest speed
+FASTEST_SHARE = 0.85            # share of each frame's wall time spent simulating at the fastest speed
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WEB_DIR = PROJECT_ROOT / "web"
 DEFAULT_SETTINGS_FILE = PROJECT_ROOT / "data" / "settings.json"
+PROFILE_POINTS = 144            # samples of the traffic curve sent to the page for a timed run
 
 
 class Session:
@@ -49,13 +67,18 @@ class Session:
         self.settings = store.load()
         self.lock = threading.Lock()
         self.new_frame = threading.Condition()
+        self.plan = RunPlan()           # steady traffic until a timed run is started
         self.paused = False
-        self.speed: float = 5
+        self.finished = False           # a timed run reached its stop time
+        self.speed: float | str = 5
+        self.actual_speed = 0.0         # simulated seconds per real second, measured
         self.error: str | None = None
         self.frame_id = 0
         self.frame_json = "{}"
         self.layout_json = "{}"
         self.layout_id = 0
+        self.profile_json = "null"      # the expected-traffic curve, sent again when it changes
+        self.profile_id = 0
         self._step_debt = 0.0
         with self.lock:
             self._rebuild()
@@ -63,13 +86,41 @@ class Session:
     # --- called from HTTP threads ------------------------------------------------------
     def restart(self) -> None:
         with self.lock:
+            if self.finished:
+                self.paused = False     # it paused itself at the stop time
             self._rebuild()
+
+    def start_run(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Start over with a new run plan, and set it running."""
+        mode = data.get("mode") if isinstance(data, dict) else None
+        with self.lock:
+            if mode == "steady":
+                plan = RunPlan()
+            elif mode in RUSH_NAMES:
+                plan = self.settings.rush_plan(mode)   # raises SettingsError if switched off
+            elif mode == "custom":
+                try:
+                    plan = RunPlan.between(parse_time(data.get("start")), parse_time(data.get("stop")))
+                except ValueError:
+                    raise ValueError("Start and stop must be times of day, like 06:00.") from None
+            else:
+                raise ValueError("mode must be steady, morning, evening or custom")
+            self.plan = plan
+            self.paused = False
+            self._rebuild()
+            return {"run": self._run_info()}
 
     def save_settings(self, data: Any) -> Settings:
         settings = Settings.from_dict(data)   # raises SettingsError
         self.store.save(settings)
         with self.lock:
             self.settings = settings
+            if self.plan.mode in RUSH_NAMES:
+                # The rush this run is built around may have moved or been switched off.
+                self.plan = (settings.rush_plan(self.plan.mode)
+                             if settings.rush_enabled(self.plan.mode) else RunPlan())
+            if self.finished:
+                self.paused = False
             self._rebuild()
         return settings
 
@@ -83,6 +134,7 @@ class Session:
             "settings": current,
             "defaults": Settings().to_dict(),
             "schema": Settings.schema(),
+            "group_help": GROUP_HELP,
             "kinds": [{"value": k, "label": v} for k, v in SPECIAL_KINDS.items()],
             "file": _display_path(self.store.path),
         }
@@ -90,10 +142,29 @@ class Session:
     def metrics_payload(self) -> dict[str, Any]:
         with self.lock:
             report = self.sim.report()
+            report["run"].update(self._run_info())
+            report["run"]["dispatcher_label"] = DISPATCHERS[self.settings.dispatcher].label
             report["settings"] = self.settings.to_dict()
-            report["rate_now"] = self.traffic.per_minute
+            report["rate_now"] = round(self.traffic.expected(self.sim.time_of_day)["total"], 2)
+            report["residents"] = {"total": len(self.traffic.residents), **self.traffic.census().to_dict()}
             report["layout_id"] = self.layout_id
         return report
+
+    def download_name(self, kind: str, ext: str) -> str:
+        """A file name for a download: algorithm, run, and the simulated time covered so far.
+
+        lookahead_morning-rush_0630-0812_trips.csv   a timed run, from its start to now
+        nearest_steady_2h15m_report.json              a steady run, time since it began
+        """
+        with self.lock:
+            plan, sim = self.plan, self.sim
+            run = {"morning": "morning-rush", "evening": "evening-rush", "custom": "hours"}.get(plan.mode, plan.mode)
+            if plan.start is None:
+                minutes = round(sim.time) // 60
+                span = f"{minutes // 60}h{minutes % 60:02d}m"
+            else:
+                span = f"{_hhmm(plan.start)}-{_hhmm(plan.start + sim.time)}"
+            return f"{self.settings.dispatcher}_{run}_{span}_{kind}.{ext}"
 
     def trips_csv(self) -> bytes:
         out = io.StringIO()
@@ -106,17 +177,21 @@ class Session:
     def control(self, data: dict[str, Any]) -> None:
         with self.lock:
             if "paused" in data:
-                self.paused = bool(data["paused"])
+                # A finished run stays stopped; Restart runs it again.
+                self.paused = bool(data["paused"]) or self.finished
             if "speed" in data:
-                speed = float(data["speed"])
+                speed = data["speed"]
+                if speed != FASTEST:
+                    speed = float(speed)
                 if speed not in SPEEDS:
                     raise ValueError(f"speed must be one of {SPEEDS}")
                 self.speed = speed
-            if "rate" in data:
-                rate = float(data["rate"])
-                if not 0 <= rate <= 600:
-                    raise ValueError("rate must be between 0 and 600")
-                self.traffic.per_minute = rate
+            if "outings" in data:
+                outings = float(data["outings"])
+                if not 0 <= outings <= 50:
+                    raise ValueError("outings must be between 0 and 50 per resident per day")
+                self.traffic.outings_per_day = outings
+                self._set_profile(self._profile())     # the expected traffic changed with it
             self._publish()
 
     def spawn(self, data: dict[str, Any]) -> None:
@@ -129,10 +204,25 @@ class Session:
     # --- simulation thread ------------------------------------------------------------
     def run_forever(self) -> None:
         next_frame = time.monotonic()
+        last_wall, last_sim, last_sim_obj = next_frame, 0.0, None
         while True:
+            frame_start = time.monotonic()
             with self.lock:
-                if not self.paused and self.error is None:
+                running = not self.paused and self.error is None
+                fastest = running and self.speed == FASTEST
+                if running and not fastest:
                     self._advance(self.speed * FRAME_SECONDS)
+            if fastest:
+                self.run_flat_out(frame_start + FRAME_SECONDS * FASTEST_SHARE)
+            with self.lock:
+                # How fast the simulation is really going (shown at the fastest speed).
+                now = time.monotonic()
+                if self.sim is last_sim_obj and now > last_wall:
+                    rate = (self.sim.time - last_sim) / (now - last_wall)
+                    self.actual_speed = 0.8 * self.actual_speed + 0.2 * rate
+                else:
+                    self.actual_speed = 0.0
+                last_wall, last_sim, last_sim_obj = now, self.sim.time, self.sim
                 self._publish()
             next_frame += FRAME_SECONDS
             delay = next_frame - time.monotonic()
@@ -141,22 +231,80 @@ class Session:
             else:
                 next_frame = time.monotonic()  # fell behind; don't try to catch up
 
+    def run_flat_out(self, until: float) -> None:
+        """Step the simulation as fast as possible until the wall clock reaches `until`.
+        Works in small chunks, releasing the lock between them so controls and the metrics
+        page still get a turn."""
+        while time.monotonic() < until:
+            with self.lock:
+                if self.speed != FASTEST or self.paused or self.error is not None:
+                    return
+                self._run_steps(FASTEST_CHUNK)
+
     # --- internals (caller holds self.lock) -------------------------------------------
     def _rebuild(self) -> None:
-        self.sim, self.traffic, lobby = make_simulation(self.settings)
+        settings = self.settings
+        if settings.random_seed:
+            settings = dataclasses.replace(settings, seed=random.SystemRandom().randrange(1, 2**31 - 1))
+        self.sim, self.traffic, lobby = make_simulation(settings, self.plan)
         self.error = None
+        self.finished = False
         self._step_debt = 0.0
         layout = self.sim.layout()
         layout["lobby"] = lobby
         layout["speeds"] = SPEEDS
+        layout["run"] = self._run_info()
+        layout["rush"] = self._rush_info()
+        layout["profile"] = self._profile()
+        self._set_profile(layout["profile"])
         self.layout_json = json.dumps(layout)
         self.layout_id += 1
         self._publish()
+
+    def _run_info(self) -> dict[str, Any]:
+        plan = self.plan
+        return {"mode": plan.mode, "start": plan.start, "stop": plan.stop,
+                "duration": plan.duration, "description": plan.describe(),
+                "residents": self.settings.residents, "seed": self.sim.seed,
+                "random_seed": self.settings.random_seed}
+
+    def _rush_info(self) -> list[dict[str, Any]]:
+        """What the rush buttons on the page need: is each rush on, and which hours it would run."""
+        info = []
+        for name in RUSH_NAMES:
+            rush = self.settings.rush_hour(name)
+            entry: dict[str, Any] = {"name": name, "enabled": self.settings.rush_enabled(name),
+                                     "start": rush.start, "peak": rush.peak, "end": rush.end}
+            if entry["enabled"]:
+                plan = self.settings.rush_plan(name)
+                entry["run_start"], entry["run_stop"] = plan.start, plan.stop
+            info.append(entry)
+        return info
+
+    def _profile(self) -> list[list[float]] | None:
+        """Expected traffic over a timed run, as [seconds into the run, trips per minute]."""
+        plan = self.plan
+        if plan.start is None or plan.duration is None:
+            return None
+        step = plan.duration / PROFILE_POINTS
+        return [[round(i * step, 1), round(self.traffic.expected((plan.start + i * step) % DAY)["total"], 3)]
+                for i in range(PROFILE_POINTS + 1)]
+
+    def _set_profile(self, profile: list[list[float]] | None) -> None:
+        self.profile_json = json.dumps(profile)
+        self.profile_id += 1
 
     def _advance(self, sim_seconds: float) -> None:
         self._step_debt += sim_seconds / self.sim.dt
         steps = int(self._step_debt + 1e-9)
         self._step_debt -= steps
+        self._run_steps(steps)
+
+    def _run_steps(self, steps: int) -> None:
+        """Step the simulation, stopping a timed run at its stop time."""
+        duration = self.plan.duration
+        if duration is not None:
+            steps = min(steps, max(0, round((duration - self.sim.time) / self.sim.dt)))
         try:
             for _ in range(steps):
                 self.sim.step()
@@ -164,13 +312,24 @@ class Session:
             self.error = traceback.format_exc()
             self.paused = True
             log.exception("simulation crashed")
+        if duration is not None and self.sim.time >= duration - self.sim.dt / 2:
+            self.finished = True
+            self.paused = True
+            self._step_debt = 0.0
 
     def _publish(self) -> None:
         frame = self.sim.snapshot()
         frame["stats"] = self.sim.summary()
+        expected = self.traffic.expected(self.sim.time_of_day)
         frame["paused"] = self.paused
+        frame["finished"] = self.finished
         frame["speed"] = self.speed
-        frame["rate"] = self.traffic.per_minute
+        frame["actual_speed"] = round(self.actual_speed, 1)
+        frame["outings"] = self.traffic.outings_per_day
+        frame["rate_now"] = round(expected["total"], 2)          # expected trips per minute now
+        frame["leaving"] = round(expected["leaving"], 3)         # share of them: commutes out
+        frame["returning"] = round(expected["returning"], 3)     # share of them: commutes home
+        frame["residents"] = {"total": len(self.traffic.residents), **self.traffic.census().to_dict()}
         frame["layout_id"] = self.layout_id
         frame["error"] = self.error
         payload = json.dumps(frame)
@@ -178,6 +337,12 @@ class Session:
             self.frame_json = payload
             self.frame_id += 1
             self.new_frame.notify_all()
+
+
+def _hhmm(seconds: float) -> str:
+    """Time of day for a file name: 0630 (no colon, which file systems dislike)."""
+    m = round(seconds) // 60 % (24 * 60)      # to the second first: 0.1 s steps drift
+    return f"{m // 60:02d}{m % 60:02d}"
 
 
 def _display_path(path: Path) -> str:
@@ -193,6 +358,7 @@ def make_handler(session: Session, web_dir: Path) -> type[BaseHTTPRequestHandler
         "/api/control": session.control,
         "/api/spawn": session.spawn,
         "/api/restart": lambda _: session.restart(),
+        "/api/run": session.start_run,
         "/api/settings": lambda d: {"settings": session.save_settings(d).to_dict()},
         "/api/settings/defaults": lambda _: {"settings": session.restore_defaults().to_dict()},
     }
@@ -211,15 +377,18 @@ def make_handler(session: Session, web_dir: Path) -> type[BaseHTTPRequestHandler
             elif path == "/api/settings":
                 self._send_json(HTTPStatus.OK, session.settings_payload())
             elif path == "/api/metrics":
-                name = "elevator-metrics.json" if "download" in query else None
+                name = session.download_name("report", "json") if "download" in query else None
                 self._send_json(HTTPStatus.OK, session.metrics_payload(), download=name)
             elif path == "/api/trips.csv":
-                self._send_bytes(session.trips_csv(), "text/csv; charset=utf-8", download="elevator-trips.csv")
+                self._send_bytes(session.trips_csv(), "text/csv; charset=utf-8",
+                                 download=session.download_name("trips", "csv"))
             else:
                 self._static(path)
 
         def do_POST(self) -> None:
-            path = self.path.split("?", 1)[0]
+            path, _, query = self.path.partition("?")
+            if path == "/api/import":
+                return self._import(query)
             if path not in post_routes:
                 return self._send_json(HTTPStatus.NOT_FOUND, {"error": f"no route {path}"})
             try:
@@ -235,6 +404,19 @@ def make_handler(session: Session, web_dir: Path) -> type[BaseHTTPRequestHandler
                 return self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR,
                                        {"error": f"Couldn't write the settings file: {exc}"})
             self._send_json(HTTPStatus.OK, result if isinstance(result, dict) else {"ok": True})
+
+        def _import(self, query: str) -> None:
+            name = urllib.parse.parse_qs(query).get("name", ["imported run"])[0][:120]
+            length = int(self.headers.get("Content-Length", 0))
+            if length > MAX_BYTES:
+                return self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                                       {"error": f"{name} is larger than {MAX_BYTES // (1024 * 1024)} MB."})
+            data = self.rfile.read(length)
+            try:
+                report = report_from_file(name, data)
+            except ImportFileError as exc:
+                return self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            self._send_json(HTTPStatus.OK, {"report": report})
 
         # --- helpers ----------------------------------------------------------------
         def _send_json(self, status: HTTPStatus, body: dict[str, Any], download: str | None = None) -> None:
@@ -274,17 +456,21 @@ def make_handler(session: Session, web_dir: Path) -> type[BaseHTTPRequestHandler
             self.send_header("Connection", "keep-alive")
             self.end_headers()
             self.close_connection = True
-            sent_layout, sent_frame = -1, -1
+            sent_layout, sent_profile, sent_frame = -1, -1, -1
             try:
                 while True:
                     with session.new_frame:
                         session.new_frame.wait_for(lambda: session.frame_id != sent_frame, timeout=15)
                         frame_id, frame = session.frame_id, session.frame_json
                         layout_id, layout = session.layout_id, session.layout_json
+                        profile_id, profile = session.profile_id, session.profile_json
                     chunks = []
                     if layout_id != sent_layout:
                         chunks.append(f"event: layout\ndata: {layout}\n\n")
                         sent_layout = layout_id
+                    if profile_id != sent_profile:
+                        chunks.append(f"event: profile\ndata: {profile}\n\n")
+                        sent_profile = profile_id
                     if frame_id != sent_frame:
                         chunks.append(f"event: frame\ndata: {frame}\n\n")
                         sent_frame = frame_id

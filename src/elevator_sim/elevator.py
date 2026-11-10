@@ -10,6 +10,13 @@ Stops come from two places:
 
 Picking the next stop from these two sets + the current direction *is* the basic
 "collective" / SCAN algorithm: keep going while there are stops ahead, then reverse.
+
+A dispatcher may also give an idle car a `park_floor`: it travels there without opening its
+doors, waits, and drops the parking floor as soon as it gets a real stop.
+
+`sweep_to` is for SCAN-style dispatching: the car keeps going to that floor (an end of the
+building) before it turns around, stopping for whatever is on the way, and keeps showing its
+direction at those stops so only people going its way get on.
 """
 
 from __future__ import annotations
@@ -53,6 +60,9 @@ class Elevator:
     passengers: list[Person] = field(default_factory=list)
     car_calls: set[int] = field(default_factory=set)
     hall_stops: set[tuple[int, Direction]] = field(default_factory=set)
+    park_floor: int | None = None              # where to wait when there is nothing to do
+    sweep_to: int | None = None                # run on to this floor before turning around
+    odometer: float = 0.0                      # floors traveled since the start
 
     # --- simple queries ----------------------------------------------------------------
     @property
@@ -131,7 +141,7 @@ class Elevator:
         """Floor to head for next, given the current direction. None = nothing ahead."""
         stops = self.all_stop_floors()
         if not stops:
-            return None
+            return self._sweep_target() if self.sweep_to is not None else self._park_target()
         if self.direction is Direction.IDLE:
             return min(stops, key=lambda f: (abs(f - self.position), f))
 
@@ -143,11 +153,35 @@ class Elevator:
         same += [f for f, hd in self.hall_stops if hd is d and reachable(f)]
         if same:
             return min(same, key=dist)
-        # 2. Only opposite-direction pickups ahead: go to the farthest one and turn around there.
+        # 2. Sweeping to an end of the building: keep going there before turning.
+        if self.sweep_to is not None and reachable(self.sweep_to):
+            return self.sweep_to
+        # 3. Only opposite-direction pickups ahead: go to the farthest one and turn around there.
         opposite = [f for f, hd in self.hall_stops if hd is not d and reachable(f)]
         if opposite:
             return max(opposite, key=dist)
         return None
+
+    def _sweep_target(self) -> int | None:
+        s = self.sweep_to
+        if s is None or (self.state is not CarState.MOVING and abs(self.position - s) < EPS):
+            return None
+        if self.direction is Direction.IDLE:
+            return s
+        return s if self.can_stop_at(s, self.direction) else None
+
+    def _park_target(self) -> int | None:
+        """The parking floor, if the car should be heading there."""
+        p = self.park_floor
+        if p is None or (self.state is not CarState.MOVING and abs(self.position - p) < EPS):
+            return None
+        if self.direction is Direction.IDLE:
+            return p
+        return p if self.can_stop_at(p, self.direction) else None
+
+    def is_parking(self) -> bool:
+        """On its way to a parking floor, with nothing else to do."""
+        return self.park_floor is not None and not self.car_calls and not self.hall_stops
 
     def _direction_on_arrival(self, floor: int) -> Direction:
         """Which arrow to light when stopping at `floor`."""
@@ -158,6 +192,8 @@ class Elevator:
                     return hd
             return Direction.IDLE
         if (floor, d) in self.hall_stops or self.stops_ahead(d):
+            return d
+        if self.sweep_to is not None and self.is_ahead(self.sweep_to, d):
             return d
         if (floor, d.opposite) in self.hall_stops or self.stops_ahead(d.opposite):
             return d.opposite
@@ -191,6 +227,17 @@ class Elevator:
 
     def _step_idle(self) -> None:
         if not self.car_calls and not self.hall_stops:
+            here = self.position
+            if self.sweep_to is not None and abs(self.sweep_to - here) > EPS:
+                self.direction = Direction.toward(here, self.sweep_to)
+                self.state = CarState.MOVING
+                return
+            self.sweep_to = None
+            if self.park_floor is not None and abs(self.park_floor - here) > EPS:
+                self.direction = Direction.toward(here, self.park_floor)
+                self.state = CarState.MOVING
+                return
+            self.park_floor = None
             self.direction = Direction.IDLE
             return
         here = self.floor
@@ -246,15 +293,21 @@ class Elevator:
         moved = (u + w) / 2 * dt
 
         if w_brake <= 1e-9 or moved >= remaining - 1e-6:
+            self.odometer += abs(target - self.position)
             self.position = float(target)
             self.velocity = 0.0
             self._arrive(target)
         else:
+            self.odometer += moved
             self.position += d.value * moved
             self.velocity = d.value * w
 
     def _arrive(self, floor: int) -> None:
         self.velocity = 0.0
+        if floor == self.park_floor:
+            self.park_floor = None
+        if floor == self.sweep_to:
+            self.sweep_to = None
         stopping_for_something = self.has_stop_at(floor)
         self.direction = self._direction_on_arrival(floor)
         if stopping_for_something:
@@ -263,6 +316,7 @@ class Elevator:
             self.state = CarState.IDLE
 
     def _start_opening(self) -> None:
+        self.park_floor = None
         self.state = CarState.DOORS_OPENING
         self.state_timer = self.door_time
 

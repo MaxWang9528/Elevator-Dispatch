@@ -9,7 +9,7 @@ from pathlib import Path
 
 from elevator_sim import (
     Arrived, Building, Elevator, InCar, MetricsCollector, Settings, SettingsStore, Simulation,
-    distribution, make_simulation, percentile,
+    distribution, make_simulation, percentile, percentiles,
 )
 from elevator_sim import report as report_cli
 from elevator_sim.server import Session, make_handler
@@ -41,6 +41,13 @@ class TestStatistics(unittest.TestCase):
         with self.assertRaises(ValueError):
             percentile([], 50)
 
+    def test_percentiles(self):
+        values = percentiles([5, 1, 3])
+        self.assertEqual(len(values), 101)
+        self.assertEqual((values[0], values[50], values[100]), (1, 3, 5))
+        self.assertEqual(values, sorted(values))
+        self.assertEqual(percentiles([]), [])
+
     def test_distribution(self):
         d = distribution(range(1, 101))
         self.assertEqual((d["n"], d["mean"], d["p50"], d["max"]), (100, 50.5, 50.5, 100))
@@ -68,6 +75,7 @@ class TestOneTrip(unittest.TestCase):
         self.assertEqual(p.trip_time, p.wait_time + p.ride_time)
         self.assertEqual(p.car_id, 0)
         self.assertEqual(r["stops_per_ride"], 0)
+        self.assertEqual((r["straight_shots"], r["straight_shot_share"]), (1, 1.0))
 
     def test_hall_call_response(self):
         calls = self.report["hall_calls"]
@@ -160,13 +168,17 @@ class TestCrowding(unittest.TestCase):
         near = sim.spawn_person(origin=0, destination=5)
         run_until(sim, all_arrived(sim))
         self.assertEqual((far.stops_en_route, near.stops_en_route), (1, 0))
-        self.assertEqual(sim.report()["passengers"]["stops_per_ride"], 0.5)
+        p = sim.report()["passengers"]
+        self.assertEqual(p["stops_per_ride"], 0.5)
+        # Only the rider to 5 went straight there; the one to 9 stopped at 5 on the way.
+        self.assertEqual((p["straight_shots"], p["straight_shot_share"]), (1, 0.5))
+        self.assertEqual(sim.report()["by_direction"]["up"]["straight_shot_share"], 0.5)
 
 
 class TestUnderTraffic(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.settings = Settings.from_dict({"rate": 30, "warmup": 0, "seed": 5})
+        cls.settings = Settings.from_dict({"outings": 40, "warmup": 0, "seed": 5})
         cls.sim, _, _ = make_simulation(cls.settings)
         cls.sim.run(20 * 60)
         cls.report = cls.sim.report()
@@ -203,6 +215,11 @@ class TestUnderTraffic(unittest.TestCase):
             self.assertLessEqual(d["p90"], d["p95"])
             self.assertLessEqual(d["p95"], d["p99"])
             self.assertLessEqual(d["p99"], d["max"])
+        p = self.report["passengers"]
+        steps = p["trip_percentiles"]
+        self.assertEqual(len(steps), 101)
+        self.assertEqual(steps, sorted(steps))
+        self.assertEqual((steps[50], steps[95], steps[100]), (p["trip"]["p50"], p["trip"]["p95"], p["trip"]["max"]))
         share = self.report["passengers"]["long_wait_share"]
         self.assertTrue(0 <= share <= 1)
 
@@ -237,7 +254,7 @@ class TestUnderTraffic(unittest.TestCase):
         again, _, _ = make_simulation(self.settings)
         again.run(20 * 60)
         self.assertEqual(again.report(), self.report)
-        other, _, _ = make_simulation(Settings.from_dict({"rate": 30, "warmup": 0, "seed": 6}))
+        other, _, _ = make_simulation(Settings.from_dict({"outings": 40, "warmup": 0, "seed": 6}))
         other.run(20 * 60)
         self.assertNotEqual(other.report()["passengers"], self.report["passengers"])
 
@@ -276,14 +293,14 @@ class TestTimelineSettling(unittest.TestCase):
 
 class TestOverload(unittest.TestCase):
     def test_flag_when_the_cars_cannot_keep_up(self):
-        busy, _, _ = make_simulation(Settings.from_dict({"rate": 120, "elevators": 2, "warmup": 0}))
+        busy, _, _ = make_simulation(Settings.from_dict({"outings": 40, "elevators": 2, "warmup": 0}))
         busy.run(20 * 60)
         system = busy.report()["system"]
         self.assertTrue(system["overloaded"])
         self.assertGreater(system["backlog_change"], 100)
         self.assertLess(system["delivered_per_hour"], system["arrivals_per_hour"])
 
-        calm, _, _ = make_simulation(Settings.from_dict({"rate": 5, "warmup": 0}))
+        calm, _, _ = make_simulation(Settings.from_dict({"outings": 3.5, "warmup": 0}))
         calm.run(20 * 60)
         self.assertFalse(calm.report()["system"]["overloaded"])
 
@@ -300,7 +317,7 @@ class TestSettingsAndCli(unittest.TestCase):
     def test_cli_writes_report_and_trips(self):
         with tempfile.TemporaryDirectory() as tmp:
             out, trips = Path(tmp) / "run.json", Path(tmp) / "trips.csv"
-            report = report_cli.main(["--minutes", "3", "--warmup", "60", "--rate", "30", "--seed", "9",
+            report = report_cli.main(["--minutes", "3", "--warmup", "60", "--outings", "20", "--seed", "9",
                                       "--quiet", "--settings", str(Path(tmp) / "none.json"),
                                       "--json", str(out), "--trips", str(trips)])
             saved = json.loads(out.read_text())
@@ -336,11 +353,11 @@ class TestServerEndpoints(unittest.TestCase):
         self.assertIn("timeline", data)
         self.assertTrue(data["warming_up"])
         with urllib.request.urlopen(f"{self.base}/api/metrics?download=1") as res:
-            self.assertIn("elevator-metrics.json", res.headers["Content-Disposition"])
+            self.assertIn('filename="lookahead_steady_0h00m_report.json"', res.headers["Content-Disposition"])
 
     def test_trips_csv(self):
         with urllib.request.urlopen(f"{self.base}/api/trips.csv") as res:
-            self.assertIn("attachment", res.headers["Content-Disposition"])
+            self.assertIn('attachment; filename="lookahead_steady_0h00m_trips.csv"', res.headers["Content-Disposition"])
             lines = res.read().decode().splitlines()
         self.assertEqual(lines[0].split(","), list(Simulation.TRIP_COLUMNS))
         self.assertEqual(lines[1].split(",")[:5], ["0", "1", "8", "up", "waiting"])

@@ -77,13 +77,16 @@ class TestBraking(unittest.TestCase):
         self.assertIn((11, Direction.UP), car.hall_stops)  # served later, after turning around
 
     def test_motion_limits_hold_under_traffic(self):
-        sim, _, _ = make_simulation(Settings.from_dict({"rate": 40}))
+        sim, _, _ = make_simulation(Settings.from_dict({"outings": 30}))
         prev = {c.id: c.velocity for c in sim.elevators}
         for _ in range(round(1200 / sim.dt)):
             sim.step()
             for c in sim.elevators:
                 self.assertLessEqual(abs(c.velocity), c.speed + 1e-9)
-                self.assertLessEqual(abs(c.velocity - prev[c.id]), c.acceleration * sim.dt + 1e-6,
+                # On the tick a car lands on its floor, the tiny speed left after braking at the
+                # limit (well under 1% of a·dt) is zeroed as it snaps to the floor.
+                limit = c.acceleration * sim.dt * (1.02 if c.velocity == 0 else 1) + 1e-6
+                self.assertLessEqual(abs(c.velocity - prev[c.id]), limit,
                                      f"car {c.id} changed speed too fast at t={sim.time:.1f}")
                 if c.state is not CarState.MOVING:
                     self.assertEqual(c.velocity, 0.0)

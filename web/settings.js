@@ -27,6 +27,7 @@ class SettingsView {
     if (!res.ok) throw new Error(`Server answered ${res.status}`);
     const data = await res.json();
     this.schema = data.schema;
+    this.groupHelp = data.group_help || {};
     this.kinds = data.kinds;
     this.saved = data.settings;
     document.getElementById("settingsFile").textContent = data.file;
@@ -43,35 +44,67 @@ class SettingsView {
     }
     this.groupsEl.replaceChildren(...[...groups].map(([name, fields]) => {
       const section = el("section", { class: "settings-group" });
-      section.append(el("h2", {}, name), ...fields.map((f) => this.renderField(f)));
+      section.append(el("h2", {}, name));
+      if (this.groupHelp[name]) section.append(el("p", { class: "help" }, this.groupHelp[name]));
+      section.append(...fields.map((f) => this.renderField(f)));
       return section;
     }));
+    // Switches grey out the fields that depend on them.
+    for (const f of this.schema) {
+      if (f.type === "bool") this.form.elements[f.key].addEventListener("change", () => this.syncEnabled());
+    }
   }
 
   renderField(f) {
     const id = `set-${f.key}`;
-    const wrap = el("div", { class: "field" });
-    const input = el("input", {
-      type: "number", id, name: f.key, min: f.min, max: f.max, step: f.step,
-      inputmode: f.type === "int" ? "numeric" : "decimal", required: "",
-      "aria-describedby": `help-${f.key} err-${f.key}`,
-    });
+    const wrap = el("div", { class: "field", "data-key": f.key });
+    const described = { "aria-describedby": `help-${f.key} err-${f.key}` };
+    let input, help = f.help;
+    if (f.type === "bool") {
+      input = el("input", { type: "checkbox", id, name: f.key, ...described });
+      help ||= `Default ${f.default ? "on" : "off"}.`;
+    } else if (f.type === "choice") {
+      input = el("select", { id, name: f.key, ...described }, ...f.options.map((o) => new Option(o.label, o.value)));
+      help ||= "";
+    } else if (f.type === "time") {
+      input = el("input", { type: "time", id, name: f.key, required: "", ...described });
+      help ||= `Default ${f.default}.`;
+    } else {
+      input = el("input", {
+        type: "number", id, name: f.key, min: f.min, max: f.max, step: f.step,
+        inputmode: f.type === "int" ? "numeric" : "decimal", required: "", ...described,
+      });
+      help ||= `Default ${f.default}.`;
+    }
     const box = el("div", { class: "field-input" }, input);
     if (f.unit) box.append(el("span", { class: "unit" }, f.unit));
     wrap.append(
       el("label", { for: id }, f.label),
       box,
-      el("p", { class: "help", id: `help-${f.key}` }, f.help || `Default ${f.default}.`),
+      el("p", { class: "help", id: `help-${f.key}` }, help),
       el("p", { class: "field-error", id: `err-${f.key}`, hidden: "" }),
     );
     return wrap;
   }
 
+  /** Fields that belong to a switch are greyed out (but kept) while it is off. */
+  syncEnabled() {
+    for (const f of this.schema) {
+      if (!f.enabled_by && !f.disabled_by) continue;
+      const on = f.enabled_by ? this.form.elements[f.enabled_by].checked : !this.form.elements[f.disabled_by].checked;
+      this.form.elements[f.key].disabled = !on;
+      this.groupsEl.querySelector(`[data-key="${f.key}"]`).classList.toggle("is-off", !on);
+    }
+  }
+
   fill(settings) {
     for (const f of this.schema) {
       const input = this.form.elements[f.key];
-      if (input) input.value = settings[f.key];
+      if (!input) continue;
+      if (f.type === "bool") input.checked = Boolean(settings[f.key]);
+      else input.value = settings[f.key];
     }
+    this.syncEnabled();
     this.rowsEl.replaceChildren(...settings.special_floors.map((sf) => this.renderRow(sf)));
     this.clearErrors();
     this.updateRows();
@@ -137,7 +170,7 @@ class SettingsView {
     if (total > 100) {
       out.textContent = `Shares add up to ${pct(total)}. Lower them to 100% or less.`;
     } else if (this.rowsEl.rows.length) {
-      out.textContent = `Special floors take ${pct(total)} of trips. The other ${pct(100 - total)} go between residents' floors.`;
+      out.textContent = `Special floors get ${pct(total)} of outings. The other ${pct(100 - total)} visit another resident's floor.`;
     } else {
       out.textContent = "";
     }
@@ -149,7 +182,7 @@ class SettingsView {
     const data = {};
     for (const f of this.schema) {
       const input = this.form.elements[f.key];
-      if (input) data[f.key] = input.value;
+      if (input) data[f.key] = f.type === "bool" ? input.checked : input.value;
     }
     data.special_floors = [...this.rowsEl.rows].map((tr) => {
       const v = (p) => tr.querySelector(`[data-prop=${p}]`).value;
@@ -237,6 +270,7 @@ class SettingsView {
     if (input) {
       input.classList.add("is-invalid");
       input.setAttribute("aria-invalid", "true");
+      input.scrollIntoView({ block: "center" });
       input.focus();
     }
   }

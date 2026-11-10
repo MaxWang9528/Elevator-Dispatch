@@ -87,31 +87,35 @@ class TestMakeSimulation(unittest.TestCase):
         self.assertEqual(len(sim.elevators), 6)
         self.assertTrue(all(c.position == 0 for c in sim.elevators))
 
-    def test_trip_shares_match_settings(self):
-        sim, traffic, _ = make_simulation(Settings())
+    def test_outing_destinations_match_settings(self):
+        sim, traffic, _ = make_simulation(Settings.from_dict({"residents": 20000}))
         n = 20000
         for _ in range(n):
-            traffic.spawn_one(sim)
-        touches = Counter()
-        for p in sim.people.values():
-            for f in {p.origin_floor, p.requested_floor}:
-                touches[f] += 1
-        expected = {0: 0.45, 3: 0.32, 4: 0.08, 37: 0.07}
+            traffic.start_outing(sim)
+        people = list(sim.people.values())
+        self.assertEqual(len(people), n)                     # everyone was home, so each one went
+        homes = set(traffic.home_floors)
+        self.assertTrue(all(p.origin_floor in homes and p.purpose == "outing" for p in people))
+        to = Counter(p.requested_floor for p in people)
+        expected = {sf.floor - 1: sf.share / 100 for sf in Settings().special_floors}
         for floor, share in expected.items():
-            self.assertAlmostEqual(touches[floor] / n, share, delta=0.015, msg=f"floor index {floor}")
-        # remaining ~8% of trips are between two residential floors
-        between = sum(1 for p in sim.people.values()
-                      if p.origin_floor not in expected and p.requested_floor not in expected)
-        self.assertAlmostEqual(between / n, 0.08, delta=0.015)
+            self.assertAlmostEqual(to[floor] / n, share, delta=0.015, msg=f"floor index {floor}")
+        # the rest visit another resident's floor
+        visits = sum(1 for p in people if p.requested_floor in homes)
+        self.assertAlmostEqual(visits / n, 1 - sum(expected.values()), delta=0.015)
+        self.assertIsNone(traffic.start_outing(sim))       # nobody is left at home
 
     def test_runs_and_delivers(self):
-        sim, traffic, _ = make_simulation(Settings.from_dict({"rate": 30}))
+        sim, traffic, _ = make_simulation(Settings.from_dict({"outings": 20}))
         sim.run(600)
-        traffic.per_minute = 0
+        traffic.outings_per_day = 0
         sim.run(900)
         sim.check_invariants()
-        self.assertTrue(all(isinstance(p.location, Arrived) for p in sim.people.values()))
-
+        # Return trips keep coming as residents finish their outings, but everyone who set
+        # off in the first 10 minutes has long since arrived.
+        early = [p for p in sim.people.values() if p.spawn_time < 600]
+        self.assertGreater(len(early), 100)
+        self.assertTrue(all(isinstance(p.location, Arrived) for p in early))
 
 if __name__ == "__main__":
     unittest.main()
