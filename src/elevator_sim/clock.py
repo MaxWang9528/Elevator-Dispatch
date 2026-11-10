@@ -33,8 +33,8 @@ def format_time(seconds: float, with_seconds: bool = False) -> str:
 class RunPlan:
     """When a run starts and ends.
 
-    mode      "steady" (no time of day), "morning" / "evening" (the hours around that rush),
-              or "custom" (hours you chose)
+    mode      "steady" (no time of day), "morning" / "lunch" / "evening" (the hours around
+              that rush), or "custom" (hours you chose)
     start     the time of day at simulated second 0; None for a steady run
     duration  simulated seconds until the run ends; None = it runs until you stop it
     """
@@ -65,7 +65,8 @@ class RunPlan:
     def describe(self) -> str:
         if self.start is None:
             return "steady traffic"
-        name = {"morning": "morning rush", "evening": "evening rush"}.get(self.mode, "chosen hours")
+        name = {"morning": "morning rush", "lunch": "lunch rush",
+                "evening": "evening rush"}.get(self.mode, "chosen hours")
         if self.duration is None:
             return f"{name}, from {format_time(self.start)}"
         return f"{name}, {format_time(self.start)} to {format_time(self.stop)}"

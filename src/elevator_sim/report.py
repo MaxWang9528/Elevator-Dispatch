@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .clock import RunPlan, format_time, parse_time
+from .presets import load_preset
 from .settings import RUSH_NAMES, Settings, SettingsError, SettingsStore, make_simulation
 from .simulation import Simulation
 
@@ -62,7 +63,8 @@ def format_report(report: dict[str, Any], timeline: bool = False) -> str:
         "Elevator simulation report",
         f"  {run['floors']} floors, {run['elevators']} elevators, {run['dispatcher']}, seed {run['seed']}",
         f"  Run: {run.get('description', 'steady traffic')}"
-        + (f", {run['residents']:,} residents" if run.get("residents") else ""),
+        + (f", {run['residents']:,} {'people working here' if report.get('settings', {}).get('office') else 'residents'}"
+           if run.get("residents") else ""),
         f"  Measured {stamp(start)} to {stamp(report['time'])} "
         f"({report['measured_seconds'] / 60:.1f} min), {p['measured']:,} people",
         "",
@@ -71,6 +73,14 @@ def format_report(report: dict[str, Any], timeline: bool = False) -> str:
         lines += [f"  NOT KEEPING UP: {s['backlog_change']:+,} people in queues and cars since "
                   "measuring began. Waits are still growing, so these averages understate them.", ""]
 
+    if p.get("changes"):
+        cw, jw = p["change_wait"], p["journey_with_change"]
+        lines_changes = [f"  Rides after changing cars: {p['changes']:,}, waiting {_num(cw['mean'])} s on average "
+                         f"(95th {_num(cw['p95'])} s)",
+                         f"  Whole journey when changing cars: {_num(jw['mean'])} s on average "
+                         f"(95th {_num(jw['p95'])} s), {p['journeys_with_change']:,} journeys"]
+    else:
+        lines_changes = []
     lines.append(f"{'Passengers (seconds)':<24}{'mean':>8}{'median':>8}{'90th':>8}{'95th':>8}{'99th':>8}{'max':>8}{'people':>9}")
     for label, key in (("Wait", "wait"), ("Ride", "ride"), ("Whole trip", "trip")):
         d = p[key]
@@ -83,6 +93,7 @@ def format_report(report: dict[str, Any], timeline: bool = False) -> str:
         f"  Stops during a ride, other than their own: {_num(p['stops_per_ride'], digits=2)}",
         f"  Straight shots (no other stops on the way): {_pct(p['straight_shot_share'])} "
         f"({p['straight_shots']:,} of {p['delivered']:,} delivered)",
+        *lines_changes,
         "",
         f"{'By direction':<24}{'people':>8}{'avg wait':>10}{'95th wait':>11}{'avg trip':>10}{'straight':>10}",
     ]
@@ -141,6 +152,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser.add_argument("--stop", help="time of day the run stops, like 20:00 (needs --start)")
     parser.add_argument("--timeline", action="store_true", help="also print a row per chart interval")
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_FILE, help="settings file to use")
+    parser.add_argument("--preset", help="use this preset's settings instead (built-in, or saved next to the settings file)")
     parser.add_argument("--seed", type=int, help="override the random seed")
     parser.add_argument("--dispatcher", help="override the dispatch algorithm (see Settings)")
     parser.add_argument("--residents", type=int, help="override the number of residents")
@@ -160,6 +172,8 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         parser.error("--minutes can't be combined with --rush or --stop, which set the length of the run")
 
     settings = SettingsStore(args.settings).load()
+    if args.preset:
+        settings = load_preset(parser, args.settings, args.preset)
     overrides = {k: v for k, v in (("seed", args.seed), ("dispatcher", args.dispatcher), ("residents", args.residents),
                                    ("outings", args.outings), ("warmup", args.warmup)) if v is not None}
     if overrides:

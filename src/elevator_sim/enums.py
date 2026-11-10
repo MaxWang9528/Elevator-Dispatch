@@ -39,3 +39,4 @@ class FloorKind(Enum):
     PARKING = auto()
     AMENITY = auto()         # gym, pool, rooftop, lounge...
     RETAIL = auto()
+    CLOSED = auto()          # nobody lives or works here and no elevator has to stop (mechanical floors)

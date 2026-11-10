@@ -37,7 +37,7 @@ class TowerRenderer {
   readColors() {
     const css = getComputedStyle(document.documentElement);
     const names = ["bg", "ink", "muted", "shaft", "car", "car-open", "up", "down", "amber",
-                   "floor-line", "parking", "lobby", "amenity", "retail", "lantern-off", "hover",
+                   "floor-line", "parking", "lobby", "amenity", "retail", "closed", "lantern-off", "hover",
                    "speed-0", "speed-mid", "speed-1"];
     this.c = Object.fromEntries(names.map((n) => [n, css.getPropertyValue(`--${n}`).trim()]));
     this.speedRamp = ["speed-0", "speed-mid", "speed-1"].map((n) => hexToRgb(this.c[n]));
@@ -72,11 +72,16 @@ class TowerRenderer {
     g.height = Math.ceil(n * g.floorH + 2 * g.pad);
     g.width = w;
     // Compact drawing, centred: [labels][corridor with queues][lanterns][shafts]
-    const labelW = 36, lanternW = 28, side = 16;
-    g.gap = cars > 8 ? 6 : 10;
-    g.shaftW = clamp((w - 2 * side - labelW - lanternW - 160) / cars - g.gap, 18, 60);
-    g.shaftsW = cars * g.shaftW + (cars - 1) * g.gap;
-    const corridorW = clamp(w - 2 * side - labelW - lanternW - g.shaftsW, 100, 340);
+    const labelW = 32, lanternW = 22, side = 16;
+    // Elevator groups sit apart, with a wider gap between them than between their cars.
+    const groupOf = this.layout.cars.map((car) => car.group ?? 0);
+    const breaks = groupOf.filter((grp, i) => i > 0 && grp !== groupOf[i - 1]).length;
+    g.gap = cars > 30 ? 2 : cars > 8 ? 6 : 10;
+    g.groupGap = breaks ? g.gap + 10 : g.gap;
+    const room = w - 2 * side - labelW - lanternW - 120 - breaks * (g.groupGap - g.gap);
+    g.shaftW = clamp(room / cars - g.gap, cars > 16 ? 4 : 18, 60);
+    g.shaftsW = cars * g.shaftW + (cars - 1) * g.gap + breaks * (g.groupGap - g.gap);
+    const corridorW = clamp(w - 2 * side - labelW - lanternW - g.shaftsW, 80, 190);
     const total = labelW + corridorW + lanternW + g.shaftsW;
     g.left = Math.max(side, (w - total) / 2);
     g.labelX = g.left + labelW;              // right edge of the floor labels
@@ -84,6 +89,32 @@ class TowerRenderer {
     g.queueRight = g.labelX + corridorW;
     g.lanternX = g.queueRight + lanternW / 2;
     g.shaftsX = g.queueRight + lanternW;
+    g.carX = [];
+    let x = g.shaftsX;
+    groupOf.forEach((grp, i) => {
+      if (i > 0) x += g.shaftW + (grp !== groupOf[i - 1] ? g.groupGap : g.gap);
+      g.carX.push(x);
+    });
+    // Runs of floors each car stops at ([lowest, highest] index pairs); null = every floor.
+    this.servedRuns = this.layout.cars.map((car) => {
+      if (!car.served_floors) return null;
+      const runs = [];
+      for (const f of car.served_floors) {
+        const last = runs[runs.length - 1];
+        if (last && last[1] === f - 1) last[1] = f; else runs.push([f, f]);
+      }
+      return runs;
+    });
+    // Group names over their shafts, when there is more than one group.
+    this.groupLabels = [];
+    if (breaks && this.layout.groups) {
+      groupOf.forEach((grp, i) => {
+        if (i > 0 && grp === groupOf[i - 1]) return;
+        const last = groupOf.lastIndexOf(grp);
+        this.groupLabels.push({ name: this.layout.groups[grp]?.name ?? "", x: g.carX[i],
+                                w: g.carX[last] + g.shaftW - g.carX[i] });
+      });
+    }
     g.dotR = clamp(g.floorH * 0.13, 1.8, 3.2);
     g.dotStep = 2 * g.dotR + 2.2;
     g.maxQueueDots = Math.max(1, Math.floor((g.queueRight - g.queueLeft - 26) / g.dotStep));
@@ -104,7 +135,7 @@ class TowerRenderer {
   }
 
   shaftX(carIndex) {
-    return this.g.shaftsX + carIndex * (this.g.shaftW + this.g.gap);
+    return this.g.carX[carIndex];
   }
 
   floorAt(evt) {
@@ -117,15 +148,17 @@ class TowerRenderer {
   }
 
   carBox(car, pos) {
-    const x = this.shaftX(car.id) + 2;
-    const w = this.g.shaftW - 4;
+    const inset = this.g.shaftW >= 12 ? 2 : 0.5;     // very narrow shafts (many cars): fill them
+    const x = this.shaftX(car.id) + inset;
+    const w = this.g.shaftW - 2 * inset;
     const y = this.floorTop(pos) + 2;
     const h = this.g.floorH - 4;
     return { x, y, w, h };
   }
 
   riderSlot(box, index, capacity) {
-    const innerX = box.x + 5, innerW = box.w - 8;
+    const pad = box.w >= 20 ? 5 : 3;     // clear of the door bar
+    const innerX = box.x + pad, innerW = Math.max(1, box.w - pad - (box.w >= 20 ? 3 : 1));
     const innerY = box.y + 2, innerH = box.h - 4;
     // Grid with roughly square cells; dots shrink to fit a full car.
     const rows = clamp(Math.round(Math.sqrt((capacity * innerH) / innerW)), 1, capacity);
@@ -188,13 +221,13 @@ class TowerRenderer {
       }
       ctx.textAlign = "right";
       ctx.font = labelFont;
-      ctx.fillStyle = f.kind === "residential" ? c.muted : c.ink;
+      ctx.fillStyle = f.kind === "residential" || f.kind === "closed" ? c.muted : c.ink;
       ctx.fillText(f.label, g.labelX - 6, top + g.floorH / 2 + 0.5);
       if (f.name) {
         ctx.textAlign = "left";
         ctx.font = nameFont;
         ctx.fillStyle = c.muted;
-        ctx.fillText(f.name, g.queueLeft, top + g.floorH / 2 + 0.5, g.queueRight - g.queueLeft - 8);
+        ctx.fillText(this.fitText(f.name, g.queueRight - g.queueLeft - 8), g.queueLeft, top + g.floorH / 2 + 0.5);
       }
       ctx.fillStyle = c["floor-line"];
       ctx.fillRect(g.labelX, top + g.floorH - 1, g.shaftsX - g.labelX - 4, 1);
@@ -203,8 +236,24 @@ class TowerRenderer {
     // shafts
     const shaftTop = this.floorTop(floors.length - 1);
     const shaftH = floors.length * g.floorH;
+    // A car's shaft is dimmed where it doesn't stop (an express zone, or another group's floors).
     ctx.fillStyle = c.shaft;
-    for (const car of cars) ctx.fillRect(this.shaftX(car.id), shaftTop, g.shaftW, shaftH);
+    for (const car of cars) {
+      const x = this.shaftX(car.id), runs = this.servedRuns[car.id];
+      if (!runs) { ctx.fillRect(x, shaftTop, g.shaftW, shaftH); continue; }
+      ctx.globalAlpha = 0.3;
+      ctx.fillRect(x, shaftTop, g.shaftW, shaftH);
+      ctx.globalAlpha = 1;
+      for (const [lo, hi] of runs) ctx.fillRect(x, this.floorTop(hi), g.shaftW, (hi - lo + 1) * g.floorH);
+    }
+    if (this.groupLabels.length) {
+      ctx.font = `600 11px ${this.fontUi}`;
+      ctx.fillStyle = c.muted;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      for (const lab of this.groupLabels) ctx.fillText(lab.name, lab.x + lab.w / 2, shaftTop - 2, lab.w + g.gap);
+      ctx.textBaseline = "middle";
+    }
 
     // assigned pickups (notch on the shaft's left edge) and car calls (amber dot, right edge)
     for (const car of cars) {
@@ -238,6 +287,23 @@ class TowerRenderer {
 
     // people
     this.drawPeople(now, cars);
+  }
+
+  /** `text` cut short with an ellipsis to fit `maxW` in the current font (rather than squeezed). */
+  fitText(text, maxW) {
+    const key = `${this.ctx.font}|${maxW}|${text}`;
+    this.fitCache ??= new Map();
+    let out = this.fitCache.get(key);
+    if (out === undefined) {
+      out = text;
+      if (this.ctx.measureText(out).width > maxW) {
+        while (out.length > 1 && this.ctx.measureText(`${out}…`).width > maxW) out = out.slice(0, -1);
+        out = `${out.trimEnd()}…`;
+      }
+      if (this.fitCache.size > 500) this.fitCache.clear();
+      this.fitCache.set(key, out);
+    }
+    return out;
   }
 
   /** 0 = stopped, 1 = top speed -> color along the speed ramp. */

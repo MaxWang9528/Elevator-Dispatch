@@ -44,6 +44,7 @@ class Elevator:
     speed: float = 1.0                         # top speed, floors per second
     acceleration: float = 0.35                 # floors per second², used to speed up and to brake
     served_floors: frozenset[int] | None = None  # None = every floor; a subset = express car
+    group: int = 0                             # elevator group (bank): its own hall buttons and controller
     door_time: float = 2.0                     # seconds to open, and again to close
     dwell_time: float = 2.0                    # minimum time doors stay open
     transfer_time: float = 1.0                 # seconds per person getting on or off

@@ -404,7 +404,7 @@ class TestSessionRuns(unittest.TestCase):
         self.assertEqual(self.session.sim.time, 0)
 
     def test_bad_requests(self):
-        for body in ({"mode": "lunch"}, {"mode": "custom", "start": "8", "stop": "9:00"}, {}, []):
+        for body in ({"mode": "brunch"}, {"mode": "custom", "start": "8", "stop": "9:00"}, {}, []):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 self.session.start_run(body)
         self.session.save_settings({"evening_enabled": False})

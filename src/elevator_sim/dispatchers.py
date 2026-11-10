@@ -119,7 +119,7 @@ class ScanDispatcher:
                 if call.assigned_to != best.id:
                     manager.assign(call, best)
             elif call.assigned_to is not None:
-                manager.elevators[call.assigned_to].hall_stops.discard(call.key)
+                manager.car(call.assigned_to).hall_stops.discard(call.key)
                 call.assigned_to = None
         # Start a resting car for a waiting call, if it would get there before any sweeping car.
         for call in list(manager.hall_calls.values()):
@@ -276,7 +276,7 @@ class Parker:
             others = [math.inf] * n
             for cid, pos in waiting.items():
                 if cid != car.id:
-                    other = cars[cid]
+                    other = manager.car(cid)
                     for f in range(n):
                         if other.serves(f):
                             t = self._time(other, abs(pos - f))
@@ -401,7 +401,7 @@ class LookaheadDispatcher:
         for call in list(manager.hall_calls.values()):
             if call.assigned_to is None:
                 continue
-            current = manager.elevators[call.assigned_to]
+            current = manager.car(call.assigned_to)
             if _committed(current, call):
                 continue
             current_cost = self.cost(current, call, now)

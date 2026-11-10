@@ -2,6 +2,9 @@
 
 The manager only knows what a real group controller knows: which hall buttons are lit and the
 state of each car. It never sees where waiting people want to go.
+
+A building with several elevator groups (banks) has one manager per group, each with its own
+cars and its own hall buttons, like the separate controllers of a real zoned building.
 """
 
 from __future__ import annotations
@@ -39,14 +42,19 @@ class Dispatcher(Protocol):
 
 
 class ElevatorManager:
-    def __init__(self, elevators: list[Elevator], dispatcher: Dispatcher) -> None:
-        for i, car in enumerate(elevators):
-            if car.id != i:
-                raise ValueError(f"elevator at position {i} has id {car.id}; ids must be 0..n-1")
+    def __init__(self, elevators: list[Elevator], dispatcher: Dispatcher, group: int = 0) -> None:
+        self._by_id = {car.id: car for car in elevators}
+        if len(self._by_id) != len(elevators):
+            raise ValueError("elevator ids must be unique")
         self.elevators = elevators
+        self.group = group
         self.dispatcher = dispatcher
         self.hall_calls: dict[tuple[int, Direction], HallCall] = {}
         self.now = 0.0
+
+    def car(self, car_id: int) -> Elevator:
+        """A car of this group by its id (ids are unique across the whole building)."""
+        return self._by_id[car_id]
 
     def is_lit(self, floor: int, direction: Direction) -> bool:
         return (floor, direction) in self.hall_calls
@@ -73,7 +81,7 @@ class ElevatorManager:
     def assign(self, call: HallCall, car: Elevator) -> None:
         """Give a call to a car, taking it from the car that had it, if any."""
         if call.assigned_to is not None:
-            self.elevators[call.assigned_to].hall_stops.discard(call.key)
+            self.car(call.assigned_to).hall_stops.discard(call.key)
         call.assigned_to = car.id
         car.hall_stops.add(call.key)
         car.park_floor = None
@@ -83,5 +91,5 @@ class ElevatorManager:
         Returns the call that was answered, if the button was lit."""
         call = self.hall_calls.pop((floor, direction), None)
         if call is not None and call.assigned_to is not None:
-            self.elevators[call.assigned_to].hall_stops.discard(call.key)
+            self.car(call.assigned_to).hall_stops.discard(call.key)
         return call

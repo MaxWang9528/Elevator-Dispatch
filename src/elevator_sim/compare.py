@@ -33,6 +33,7 @@ from .clock import RunPlan, format_time, parse_time
 from .dispatchers import DISPATCHERS
 from .enums import Direction, FloorKind
 from .metrics import percentile
+from .presets import load_preset
 from .settings import Settings, SettingsError, SettingsStore, make_simulation
 
 DEFAULT_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "data" / "settings.json"
@@ -253,6 +254,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser.add_argument("--seeds", default="1-10", help="like 1-20 or 101-120 or 1,5,9 (default 1-10)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="parallel processes")
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_FILE, help="settings file to use")
+    parser.add_argument("--preset", help="use this preset's settings instead (built-in, or saved next to the settings file)")
     parser.add_argument("--json", type=Path, help="also write every value as JSON")
     args = parser.parse_args(argv)
 
@@ -261,6 +263,8 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     if unknown or len(dispatchers) < 2:
         parser.error(f"give at least two dispatchers from: {', '.join(DISPATCHERS)}")
     settings = SettingsStore(args.settings).load()
+    if args.preset:
+        settings = load_preset(parser, args.settings, args.preset)
     scenarios = [s.strip() for s in args.runs.split(",") if s.strip()]
     try:
         seeds = _parse_seeds(args.seeds)

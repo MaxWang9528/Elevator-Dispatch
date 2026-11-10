@@ -295,6 +295,8 @@ class MetricsCollector:
         bucket_still_waiting: dict[int, int] = {}
         waiting = riding = delivered = 0
         long_waits = left_people = left_events = 0
+        change_waits: list[float] = []      # waits for a second (or later) car, after changing
+        journeys: list[float] = []          # first button press to final arrival, if they changed
 
         for p in people:
             if not self.measures(p):
@@ -316,6 +318,10 @@ class MetricsCollector:
             if p.left_behind:
                 left_people += 1
                 left_events += p.left_behind
+            if p.leg > 1:
+                change_waits.append(wait)
+                if p.arrive_time is not None and not p.onward and p.journey_start >= self.warmup - _EPS:
+                    journeys.append(p.arrive_time - p.journey_start)
             if p.arrive_time is not None:
                 delivered += 1
                 rides.append(p.arrive_time - p.board_time)
@@ -342,7 +348,7 @@ class MetricsCollector:
         for car in elevators:
             stats = self.cars.get(car.id, CarStats())
             fleet.add(stats)
-            cars.append({"id": car.id, "capacity": car.capacity, **stats.to_dict()})
+            cars.append({"id": car.id, "capacity": car.capacity, "group": car.group, **stats.to_dict()})
 
         timeline = []
         indices = set(self._buckets) | set(bucket_waits) | set(bucket_delivered)
@@ -405,6 +411,11 @@ class MetricsCollector:
                 # Delivered riders whose car went straight to their floor, stopping nowhere else.
                 "straight_shots": stops.count(0),
                 "straight_shot_share": _ratio(stops.count(0), len(stops)),
+                # Journeys that change cars (at a sky lobby, say). Each ride above is one leg.
+                "changes": len(change_waits),
+                "change_wait": distribution(change_waits),
+                "journeys_with_change": len(journeys),
+                "journey_with_change": distribution(journeys),
             },
             "by_direction": {
                 d.name.lower(): {

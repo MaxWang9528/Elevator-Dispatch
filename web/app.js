@@ -40,6 +40,7 @@ function onLayout(next) {
   fillFloorSelect(layout.floors, layout.lobby);
   showRun(layout.run, layout.rush);
   profile.setCurve(layout.run, layout.profile);
+  $("rateLabel").textContent = layout.office ? "Outings per person per day" : "Outings per resident per day";
 }
 
 // The expected-traffic curve changes without a new run when outings per day change.
@@ -62,6 +63,7 @@ function onFrame(frame) {
   for (const btn of $("speeds").children) {
     btn.setAttribute("aria-checked", String(btn.dataset.speed === String(frame.speed)));
   }
+  if (!lunchPending) $("lunchToggle").checked = Boolean(frame.lunch);
   if (!draggingRate) {
     $("rate").max = Math.max(10, frame.outings);
     $("rate").value = frame.outings;
@@ -70,10 +72,14 @@ function onFrame(frame) {
   $("rateHint").hidden = frame.clock !== null;
   $("rateHint").textContent = `About ${formatRate(frame.rate_now)} trips a minute. Steady traffic has no commutes.`;
   profile.setNow(frame);
-  const r = frame.residents;
-  $("residentsLine").textContent = `Residents: ${r.home.toLocaleString()} at home, `
-    + `${r.out.toLocaleString()} out or in the lobby or garage, ${r.inside.toLocaleString()} elsewhere inside, `
-    + `${r.traveling.toLocaleString()} on the move.`;
+  const r = frame.residents, n = (v) => v.toLocaleString();
+  const visitors = frame.visitors === null || frame.visitors === undefined ? ""
+    : ` Visitors in the building: ${n(frame.visitors)}.`;
+  $("residentsLine").textContent = (layout.office
+    ? `People: ${n(r.home)} at work, ${n(r.out)} out of the building or in the lobby or garage, `
+      + `${n(r.inside)} on another floor, ${n(r.traveling)} on the move.`
+    : `Residents: ${n(r.home)} at home, ${n(r.out)} out or in the lobby or garage, `
+      + `${n(r.inside)} elsewhere inside, ${n(r.traveling)} on the move.`) + visitors;
 
   const s = frame.stats;
   $("sWaiting").textContent = s.waiting.toLocaleString();
@@ -105,11 +111,11 @@ function onFrame(frame) {
 }
 
 // ---- runs: rush hours, chosen hours, or steady traffic -----------------------------------
-const RUSH_BUTTONS = { morning: $("runMorning"), evening: $("runEvening") };
+const RUSH_BUTTONS = { morning: $("runMorning"), lunch: $("runLunch"), evening: $("runEvening") };
 
 function showRun(run, rushes) {
   const timed = run.start !== null;
-  const names = { morning: "Morning rush", evening: "Evening rush", custom: "Chosen hours" };
+  const names = { morning: "Morning rush", lunch: "Lunch rush", evening: "Evening rush", custom: "Chosen hours" };
   const seed = run.seed === null || run.seed === undefined ? ""
     : ` ${run.random_seed ? "Random seed" : "Seed"} ${run.seed}.`;
   $("runNote").textContent = (!timed ? "Time since the run began. Steady traffic."
@@ -121,9 +127,13 @@ function showRun(run, rushes) {
 
   for (const rush of rushes) {
     const btn = RUSH_BUTTONS[rush.name];
+    if (!btn) continue;
+    const label = { morning: "Morning rush", lunch: "Lunch rush", evening: "Evening rush" }[rush.name];
     btn.disabled = !rush.enabled;
     btn.querySelector("small").textContent = rush.enabled
-      ? `${formatHours(rush.run_start)} to ${formatHours(rush.run_stop)}` : "Off in Settings";
+      ? `${formatHours(rush.run_start)}–${formatHours(rush.run_stop)}` : "Off";
+    btn.setAttribute("aria-label", rush.enabled
+      ? `${label}, ${formatHours(rush.run_start)} to ${formatHours(rush.run_stop)}` : `${label}, off in Settings`);
   }
 }
 
@@ -161,13 +171,18 @@ $("runForm").addEventListener("submit", (e) => {
 
 // Traffic over a timed run: the curve of people per minute, and where the run is now.
 const profile = {
-  curve: null, duration: 0, W: 272, H: 54,
+  curve: null, run: null, duration: 0, W: 272, H: 110,
 
   setCurve(run, points) {
     this.curve = points;
+    this.run = run;
     this.duration = run.duration || 0;
     $("profile").hidden = !points;
     if (!points) return;
+    // Drawn at the size it's shown, so it fills the panel's width without stretching.
+    const box = $("profileSvg");
+    this.W = Math.max(100, Math.round(box.clientWidth || 272));
+    this.H = Math.max(40, Math.round(box.clientHeight || 110));
     $("profileStart").textContent = formatHours(run.start);
     $("profileStop").textContent = formatHours(run.stop);
     const top = Math.max(...points.map((p) => p[1]), 1) * 1.08;
@@ -184,6 +199,13 @@ const profile = {
       + `<circle class="profile-dot" id="profileDot" r="3.5"/>`;
   },
 
+  /** Redraw when the panel changes width. */
+  resized() {
+    if (!this.curve || Math.round($("profileSvg").clientWidth) === this.W) return;
+    this.setCurve(this.run, this.curve);
+    if (lastFrame) this.setNow(lastFrame);
+  },
+
   setNow(frame) {
     if (!this.curve) return;
     const x = this.x(Math.min(frame.t, this.duration));
@@ -194,15 +216,19 @@ const profile = {
 
     const now = `Expected trips a minute. About ${formatRate(frame.rate_now)} now`;
     const share = (v) => `${Math.round(v * 100)}%`;
+    const office = layout.office;
     let mix = "no commuting right now";
     if (frame.leaving >= 0.05 && frame.leaving >= frame.returning) {
-      mix = `${share(frame.leaving)} of them residents leaving for the day`;
+      mix = `${share(frame.leaving)} of them ${office ? "people leaving work" : "residents leaving for the day"}`;
     } else if (frame.returning >= 0.05) {
-      mix = `${share(frame.returning)} of them residents coming home`;
+      mix = `${share(frame.returning)} of them ${office ? "people arriving for work" : "residents coming home"}`;
     }
+    if (frame.visiting >= 0.05) mix += `, ${share(frame.visiting)} visitors`;
     $("profileNow").textContent = `${now}, ${mix}. ${this.peakNote}`;
   },
 };
+
+new ResizeObserver(() => profile.resized()).observe($("profileSvg"));
 
 // ---- controls ----------------------------------------------------------------------------
 function buildSpeedButtons(speeds) {
@@ -240,6 +266,19 @@ $("rate").addEventListener("input", (e) => {
   rateTimer = setTimeout(() => post("/api/control", { outings: Number(e.target.value) }), 120);
 });
 $("rate").addEventListener("change", () => { draggingRate = false; });
+
+// The lunch peak, for this run only. Frames keep the box in step unless a change is on its way.
+let lunchPending = false;
+$("lunchToggle").addEventListener("change", async (e) => {
+  lunchPending = true;
+  try {
+    await post("/api/control", { lunch: e.target.checked });
+  } catch {
+    e.target.checked = !e.target.checked;     // post() already showed the reason
+  } finally {
+    lunchPending = false;
+  }
+});
 
 $("addForm").addEventListener("submit", (e) => {
   e.preventDefault();

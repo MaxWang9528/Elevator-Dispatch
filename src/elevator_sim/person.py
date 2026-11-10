@@ -49,11 +49,29 @@ class Person:
     stops_en_route: int = 0        # times their car stopped at a floor that wasn't theirs
     left_behind: int = 0           # times a car going their way closed its doors full
     resident_id: int | None = None # which resident is making this trip (None: a visitor)
-    purpose: str = ""              # commute_out, commute_in, outing, outing_return, or "" (added by hand)
+    purpose: str = ""              # commute_out, commute_in, outing, outing_return, lunch,
+                                   # lunch_return, or "" (added by hand)
+    group: int = 0                 # the elevator group whose hall button they press
+    # A journey that changes cars is one Person per ride (leg). All its legs share `journey` (the
+    # first leg's id) and `journey_start` (when the first button was pressed); `onward` lists the
+    # floors still to come after this leg: the next changes, then where they're really going.
+    journey: int = -1              # set to the person's own id for a first leg
+    leg: int = 1
+    onward: tuple[int, ...] = ()
+    journey_start: float | None = None
 
     def __post_init__(self) -> None:
         if self.origin_floor == self.requested_floor:
             raise ValueError(f"person {self.id}: origin and requested floor are both {self.origin_floor}")
+        if self.journey < 0:
+            self.journey = self.id
+        if self.journey_start is None:
+            self.journey_start = self.spawn_time
+
+    @property
+    def final_floor(self) -> int:
+        """Where this person's journey ends (this leg's floor unless they change cars)."""
+        return self.onward[-1] if self.onward else self.requested_floor
 
     @property
     def direction(self) -> Direction:

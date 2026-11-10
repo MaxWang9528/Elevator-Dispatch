@@ -46,9 +46,10 @@
 
       <section class="group" aria-labelledby="runTitle">
         <h2 class="group-title" id="runTitle">Start a run</h2>
-        <div class="inline">
-          <button type="button" class="btn grow run-mode" id="runMorning" data-mode="morning">Morning rush<small id="runMorningHours"></small></button>
-          <button type="button" class="btn grow run-mode" id="runEvening" data-mode="evening">Evening rush<small id="runEveningHours"></small></button>
+        <div class="run-rushes">
+          <button type="button" class="btn run-mode" id="runMorning" data-mode="morning">Morning<br>rush<small></small></button>
+          <button type="button" class="btn run-mode" id="runLunch" data-mode="lunch">Lunch<br>rush<small></small></button>
+          <button type="button" class="btn run-mode" id="runEvening" data-mode="evening">Evening<br>rush<small></small></button>
         </div>
         <form class="run-hours" id="runForm">
           <input type="time" id="runStart" value="00:00" aria-label="Start time" required>
@@ -57,17 +58,24 @@
           <button type="submit" class="btn">Run</button>
         </form>
         <button type="button" class="btn run-mode" id="runSteady" data-mode="steady">Steady traffic<small>No time of day, no rush hours</small></button>
-        <p class="hint">Rush runs and chosen hours stop at their end time. Rush hours are set in Settings.</p>
+        <p class="hint">Rush runs and chosen hours stop at their end time. Rush hours are set in Settings. A lunch rush run has the lunch peak on.</p>
       </section>
 
       <div class="group">
         <label class="slider-label" for="rate">
-          <span>Outings per resident per day</span>
+          <span id="rateLabel">Outings per resident per day</span>
           <output id="rateOut" for="rate">1.5</output>
         </label>
         <input type="range" id="rate" min="0" max="10" step="0.1" value="1.5">
         <p class="hint" id="rateHint"></p>
         <figure class="profile" id="profile" hidden>
+          <div class="profile-head">
+            <span>Expected traffic</span>
+            <label class="profile-toggle" for="lunchToggle">
+              <input type="checkbox" id="lunchToggle" aria-describedby="lunchToggleHint"> Lunch peak
+            </label>
+          </div>
+          <span class="visually-hidden" id="lunchToggleHint">For this run only. Settings has its times and share.</span>
           <svg id="profileSvg" role="img" aria-labelledby="profileNow"></svg>
           <div class="profile-ends"><span id="profileStart"></span><span id="profileStop"></span></div>
           <figcaption id="profileNow"></figcaption>
@@ -249,10 +257,52 @@
     <form id="settingsForm" class="settings" novalidate>
       <div class="settings-intro">
         <h1>Settings</h1>
-        <p>Saved on the server in <code id="settingsFile">data/settings.json</code>, so they stay after restarts. Saving restarts the simulation from the beginning.</p>
+        <p>Saved on the server in <code id="settingsFile">data/settings.json</code>, so they stay after restarts, and presets in <code id="presetsFile">data/presets.json</code>. Saving restarts the simulation from the beginning.</p>
       </div>
 
+      <section class="settings-group presets" id="presets" aria-labelledby="presetsTitle">
+        <h2 id="presetsTitle">Presets</h2>
+        <p class="help">A preset is every setting on this tab: the building, its elevators, its residents and the rest. Loading one saves it as the settings and restarts the simulation.</p>
+        <ul class="preset-list" id="presetList"></ul>
+        <div class="preset-save">
+          <label for="presetName">Save these settings as a preset</label>
+          <div class="inline">
+            <input type="text" id="presetName" class="grow" maxlength="60" placeholder="e.g. Our building, 4 cars" aria-describedby="presetSaveHelp err-preset_name">
+            <button type="button" class="btn" id="presetSave">Save preset</button>
+          </div>
+          <p class="help" id="presetSaveHelp">Saves what's on this tab now, including changes you haven't saved yet. Using a saved preset's name replaces it.</p>
+          <p class="field-error" id="err-preset_name" hidden></p>
+        </div>
+        <p class="preset-msg" id="presetMsg" aria-live="polite"></p>
+      </section>
+
       <div id="settingsGroups"></div>
+
+      <!-- Moved into the Elevators section by settings.js -->
+      <div class="eg-block" id="egBlock">
+        <h3 class="eg-title" id="egTitle">Groups</h3>
+        <div class="sf-scroll">
+          <table class="eg-table" aria-labelledby="egTitle">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Cars</th>
+                <th scope="col">Floors served</th>
+                <th scope="col">People per car</th>
+                <th scope="col">Speed</th>
+                <th scope="col"><span class="visually-hidden">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody id="egRows"></tbody>
+          </table>
+        </div>
+        <div class="sf-foot">
+          <button type="button" class="btn" id="egAdd">Add group</button>
+          <p class="sf-total" id="egTotal" aria-live="polite"></p>
+        </div>
+        <p class="help">Floors served are floor numbers and ranges, like <code>1, 20-38</code>, or <code>all</code>. A typical high-rise car at 3.5 m/s covers about 1.1 floors per second.</p>
+        <p class="field-error" id="err-elevator_groups" hidden></p>
+      </div>
 
       <section class="settings-group" aria-labelledby="sfTitle">
         <h2 id="sfTitle">Special floors</h2>

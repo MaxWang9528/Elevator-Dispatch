@@ -513,6 +513,14 @@ class MetricsView {
       ["Straight shots", p.delivered
         ? `${fmt.pct(p.straight_shot_share)}, ${fmt.int(p.straight_shots)} of ${fmt.int(p.delivered)} delivered`
         : fmt.none],
+      ...(p.changes ? [
+        ["Rides after changing cars", `${fmt.int(p.changes)}, waiting ${fmt.secs(p.change_wait.mean)} on average`
+          + ` (95th percentile ${fmt.secs(p.change_wait.p95)})`],
+        ["Whole journey when changing cars", p.journeys_with_change
+          ? `${fmt.secs(p.journey_with_change.mean)} on average, 95th percentile ${fmt.secs(p.journey_with_change.p95)}`
+            + `, ${fmt.int(p.journeys_with_change)} journeys`
+          : fmt.none],
+      ] : []),
     ]);
     this.facts("mCallFacts", [
       ["Hall calls answered", fmt.int(hc.answered)],
@@ -536,7 +544,7 @@ class MetricsView {
       c.peak_load === null || c.peak_load === undefined ? fmt.none : `${c.peak_load} of ${capacity}`, fmt.int(c.delivered)];
     const capacity = r.cars.length ? Math.max(...r.cars.map((c) => c.capacity)) : 0;
     this.table("mCars", [
-      ...r.cars.map((c) => carRow(`Car ${c.id + 1}`, c, c.capacity)),
+      ...r.cars.map((c) => carRow(carName(c, r.settings?.elevator_groups), c, c.capacity)),
       carRow("All cars", f, capacity),
     ], true);
 
@@ -571,3 +579,10 @@ class MetricsView {
 }
 
 window.MetricsView = MetricsView;
+
+/** "Car 3", or with several elevator groups "High zone, car 2" (numbered within the group). */
+function carName(car, groups) {
+  if (!groups || groups.length < 2 || car.group === undefined || !groups[car.group]) return `Car ${car.id + 1}`;
+  const first = groups.slice(0, car.group).reduce((n, g) => n + g.cars, 0);
+  return `${groups[car.group].name}, car ${car.id - first + 1}`;
+}

@@ -1,4 +1,6 @@
 # Elevator simulator
+
+Deployed version with limited functionality:
 https://elevator-dispatch.onrender.com/
 
 A multi-elevator apartment building simulation (Python, standard library only) with a live
@@ -9,6 +11,41 @@ CTA Red and Blue lines (4), common areas (5) and the roof deck and gym (38).
 Settings are edited on the Settings tab and saved to `data/settings.json` (in Docker, the
 `settings` volume), so they persist across restarts. To add a setting, add a field to
 `Settings` in `src/elevator_sim/settings.py`; the Settings tab is generated from it.
+
+## Presets
+
+A preset is a whole set of settings under a name: the building, its elevators, its residents,
+rush hours and everything else on the Settings tab. The Presets section at the top of that tab
+lists them, marks the one in use, and loads one with a click (which saves it as the settings and
+restarts the simulation). **Save preset** stores what's on the tab under a name, including edits
+not yet saved; saving under an existing name replaces that preset. Saved presets go in
+`presets.json` next to the settings file (`data/presets.json`, or the `settings` volume in Docker).
+
+Five come built in and can't be changed or deleted: **Marquee at Block 37** (the defaults),
+**Mid-rise, 12 floors** (2 slower cars, 300 residents), **Tower, 60 floors** (2,000 residents,
+a low-rise bank to floor 30 and a high-rise bank that runs express from the garage and shops to
+the sky lounge on 30) and **Office tower, 50 floors** (4,000 people at work, three zones of 4
+cars from the lobby and food court, and a lunch peak) and **One World Trade Center**.
+
+**One World Trade Center** follows public sources where they exist: floor numbers to 104, the
+lobby and base on 1-19, offices on 20-90, the sky lobby on 64, the observatory on 100-102, and
+5 Sky Pods from the lobby to 102 (calibrated to the published ride of about 47 seconds). The
+rest is estimated, because it isn't published: the banks (four of 8 cars from the lobby for 20-63,
+8 shuttles from the lobby to 64, and two local banks of 6 cars from 64 for 65-90; 57 cars in all,
+against the building's 71-73 including service cars), their speeds, and 13,000 people at work
+(about one per 200 sq ft of its 2.6 million sq ft of offices). As in the real building, people
+working above 64 ride a shuttle to the sky lobby and change there to a local car, both ways.
+Destination dispatch isn't modeled. About 4,400 observatory visitors a day (15 million from the 2015 opening to November
+2024) ride the Sky Pods up to 102 and back down from 100, between 9:00 and 21:00 with last entry
+at 20:15, busiest in the afternoon, staying 75 minutes on average.
+
+The command-line tools take `--preset NAME` (case doesn't matter) to use a preset's settings
+instead of the saved ones:
+
+```sh
+PYTHONPATH=src python3 -m elevator_sim.report --preset "Tower, 60 floors" --rush morning
+PYTHONPATH=src python3 -m elevator_sim.compare --preset "Mid-rise, 12 floors" --seeds 1-10
+```
 
 ## Run
 
@@ -26,6 +63,72 @@ PYTHONPATH=src python3 -m elevator_sim.server
 
 Then open http://localhost:8000.
 
+## Floors with no stops
+
+Settings → Building → **Floors with no stops** lists floors nobody lives or works on and no
+elevator has to stop at: mechanical floors, or floor numbers a building skips (floor numbers and
+ranges, like `2-19, 91-99`). Nobody's home is there and no trip goes there, so no elevator group
+has to serve them. They are drawn greyed out.
+
+## Elevator groups
+
+Settings → Elevators lists the building's elevator groups (banks). Each group has a name, a
+number of cars, the floors it serves (`all`, or floor numbers and ranges like `1, 20-38`), and
+its own car size and speed. Acceleration and door times apply to every car.
+
+Each group works like a separate bank in a real building: it has its own hall buttons and its own
+controller running the chosen algorithm, and it only sees its own cars and calls. A person rides
+one group's cars at a time. When more than one group serves both their floors, they take the one
+that serves the fewest floors (an express bank before a local one that also stops there).
+
+**Changing cars.** When no one group serves both floors, people change cars, as at a sky lobby:
+the simulator finds the route with the fewest changes (at most three), then the shortest, at
+floors two groups share (never at a floor with no stops). At each change they get out, walk 15
+seconds to the next group and press its button. Each ride counts as its own trip in the
+passenger figures (so the people count is rides, not journeys); the trips file links a journey's
+rides with its `journey` and `leg` columns, and the Metrics tab adds the wait for the next car and
+the whole journey from the first button press to the final arrival. Commutes, lunch, outings to
+special floors and visitors change cars when they need to; visits to another resident's (or
+office) floor stay within floors one ride away, as neighbors and colleagues mostly are. Settings
+won't save unless every floor is served and every residential floor can reach a Lobby or Parking /
+transit floor, changing cars if need be.
+
+On the Simulation tab, groups are drawn apart with their names above, and a shaft is dimmed
+where its car doesn't stop. Settings files saved before groups existed load as one group of
+every car serving every floor.
+
+## Visitors
+
+Settings → **Visitors** (off by default; any building) adds people from outside who come to see
+one floor, like an observatory, in runs with a time of day. Set how many come a day, the floor
+they enter on, the floor they go up to and the one they ride down from (the same, or a lower level
+they walk down to), the opening time, busiest time, last entry and closing time, and how long a
+visit lasts on average. They come in groups of 1 to 5 (2.5 on average) and leave together once the
+whole group has been up there for its visit; nobody stays past closing. 30% arrive at an even rate
+through opening hours and the rest around the busiest time. Their trips are `visit` and
+`visit_return` in the trips file, the Simulation tab counts the visitors in the building, and the
+traffic curve includes them. Every visitor needs one elevator group that serves both their
+entrance and the floor they visit (and the one they leave from).
+
+## Office buildings and lunch
+
+**Building → Office building** swaps the rushes. Residents become the people who work here and
+their floor is where they work. In the morning rush they arrive, up from the Lobby and Parking /
+transit floors; in the evening rush they leave, back down through the floor they came in by.
+Outside working hours they are out of the building. Outings (meetings, coffee, the mail room) are
+made only by people at work: on average each person who comes in makes the set number, spread over
+their own hours at work and busiest mid-morning and mid-afternoon. One that comes up while they're
+busy (at lunch, say) waits until they're back. The morning share is who comes in
+today; anyone who came in but isn't in the evening share works late and leaves later in the evening.
+Someone away from their floor when it's time to leave goes once they're back.
+
+**Lunch → Simulate a lunch peak** (off by default; any building) sends a share of the people who
+are home, or at work, to a Lobby, Parking / transit or Retail floor (by those floors' shares)
+between its start and end, mostly around its peak. They come back after about 45 minutes. Trips
+are marked `lunch` and `lunch_return` in the trips file. Like the rushes, lunch only happens in
+runs with a time of day. The Simulation tab has a Lunch rush run and a checkbox to switch lunch on
+or off during a run (see Runs).
+
 ## Residents and traffic
 
 Every trip is made by one of the building's residents (Settings: 1,000 by default, spread evenly
@@ -38,7 +141,9 @@ With the defaults a resident makes about 4 elevator trips a day, around 4,100 fo
   floors), or otherwise to another resident's floor. They stay a while, depending on the kind of
   floor (a few minutes at the mailboxes up to an hour or two out of the building), then go home.
   In a timed run outings follow a daily curve: rare at night, steady through the day, busiest
-  in the early evening.
+  in the early evening. Each outing is two elevator trips, there and back; commutes and lunch
+  are counted separately. The setting is an average over all residents (the building makes
+  residents × outings a day), so residents who are home more make more of them.
 - **Commutes**, only in runs with a time of day. Each day a share of residents (default 65%) leave
   in the morning rush through a Lobby or Parking / transit floor, split by those floors' shares
   (58 : 25 between floor 1 and floor 4 by default), and a share (default 55%) come home in the
@@ -56,7 +161,7 @@ The Simulation tab's **Start a run** section picks what kind of run to simulate:
 
 | Run | What happens |
 |---|---|
-| **Morning rush** / **Evening rush** | From 30 minutes before that rush starts to 30 minutes after it ends, then stops. The clock shows the time of day. Residents who have already left for the day when the run begins start out of the building. |
+| **Morning rush** / **Lunch rush** / **Evening rush** | From 30 minutes before that rush starts to 30 minutes after it ends, then stops. The clock shows the time of day. Residents who have already left for the day when the run begins start out of the building. A lunch rush run has the lunch peak on even if it's off in Settings. |
 | **From … to …** | Between any two times of day, with whichever rush hours fall in between, then stops. The same time twice is a full day; a stop before the start runs past midnight. |
 | **Steady traffic** | The default: outings at an even rate, no time of day, no commutes. Runs until you pause it. |
 
@@ -64,7 +169,10 @@ Speeds run from 1× to 200× real time; **Fastest** simulates as fast as the com
 (the status line shows how fast that is), which suits running a whole day to look at the Metrics.
 A run that reaches its stop time pauses itself; **Restart** runs it again from its start. The
 slider sets outings per resident per day for the current run (raise it to stress the elevators).
-During a timed run, a small curve under it shows the expected trips a minute over the whole run.
+During a timed run, a small curve under it shows the expected trips a minute over the whole run,
+with a **Lunch peak** checkbox that switches lunch on or off for the current run (it starts as set in
+Settings, or on in a lunch rush run). Switched on, the rest of the day's lunches are planned; switched
+off, no more people go out, but those already out for lunch still come back.
 Below the stats, a line shows where the residents are right now.
 
 ## Dispatching
@@ -121,7 +229,8 @@ Building and elevator settings come from
 `--warmup` override it for one run.
 The same seed and settings always give the same report. `GET /api/metrics` returns the report as
 JSON and `GET /api/trips.csv` one row per trip, including which resident made it and why
-(`commute_out`, `commute_in`, `outing`, `outing_return`); the Metrics tab has download buttons for both.
+(`commute_out`, `commute_in`, `outing`, `outing_return`, `lunch`, `lunch_return`, `visit`,
+`visit_return`); the Metrics tab has download buttons for both.
 Downloaded files are named after the algorithm, the run, and the simulated time covered so far,
 e.g. `lookahead_hours_0600-2000_trips.csv`, `nearest_morning-rush_0630-0812_report.json` or
 `scan_steady_2h15m_report.json`.
@@ -156,6 +265,8 @@ an empty building with every car parked at the lobby doesn't skew a comparison.
 | Other stops during a ride | Times a rider's car stopped at a floor that wasn't theirs. |
 | Straight shots | Share of delivered riders whose car went straight to their floor without stopping anywhere else. Also shown for up and down trips. |
 | By direction | People, average and 95th percentile wait, average trip, and straight shots for up and down trips. |
+| Rides after changing cars | Rides that start where the person changed cars, and their wait. Only when someone changed cars. |
+| Whole journey when changing cars | First button press to final arrival for journeys that changed cars. |
 | Hall call response | A hall button lighting to a car opening its doors there. This is what a real controller can measure. Also: buttons lit now and the oldest one. |
 | Arrivals and delivered per hour | If delivered stays below arrivals, the cars aren't keeping up. |
 | People waiting / riding | Time-averaged over the measured period, plus the peak number waiting. |
@@ -186,15 +297,17 @@ src/elevator_sim/
   person.py       Person + location (AtFloor | InCar | Arrived)
   building.py     Floor (up/down queues), Building
   elevator.py     Elevator state machine + basic up/down sweep, parking
-  manager.py      HallCall, ElevatorManager, Dispatcher interface
+  manager.py      HallCall, ElevatorManager (one per elevator group), Dispatcher interface
   dispatchers.py  NearestCarDispatcher, LookaheadDispatcher (with CallDemand and Parker), DISPATCHERS
   simulation.py   clock, people, board()/exit_car(), snapshot(), invariants
   clock.py        times of day, RunPlan (steady, a rush, or chosen hours)
-  traffic.py      ResidentTraffic (residents, outings, commutes), RushHour; simpler memoryless sources
+  traffic.py      ResidentTraffic (residents or office workers, outings, commutes, lunch), RushHour;
+                  simpler memoryless sources
   metrics.py      MetricsCollector: running totals + the full report (definitions above)
   report.py       run headless and print the report: python -m elevator_sim.report
   compare.py      compare algorithms across seeds and scenarios: python -m elevator_sim.compare
   settings.py     Settings (+ schema for the UI), validation, JSON store, make_simulation()
+  presets.py      built-in presets and PresetStore (saved presets, JSON)
   server.py       web server: static files, live frames (SSE), controls, runs, settings API
 web/              index.html, style.css, renderer.js (canvas), metrics.js (tables + charts),
                   settings.js, app.js
