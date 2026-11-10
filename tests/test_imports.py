@@ -141,8 +141,26 @@ class TestImportEndpoint(unittest.TestCase):
     def test_page_has_the_tab(self):
         with urllib.request.urlopen(f"{self.base}/") as res:
             page = res.read().decode()
-        for needle in ('id="tab-import"', 'id="view-import"', 'id="metricsLayout"', 'src="imports.js"'):
+        for needle in ('id="tab-import"', 'id="view-import"', 'id="metricsLayout"', 'src="imports.js"',
+                       'href="?sample=lookahead#import"', 'href="?sample=nearest#import"',
+                       'href="?sample=scan#import"'):
             self.assertIn(needle, page)
+
+    def test_sample_data(self):
+        # Every sample the Import tab offers is served, is a valid report, and is the right algorithm.
+        script = (Path(__file__).resolve().parents[1] / "web" / "imports.js").read_text()
+        for algorithm in ("lookahead", "nearest", "scan"):
+            with self.subTest(algorithm=algorithm):
+                self.assertIn(f'id: "{algorithm}"', script)
+                with urllib.request.urlopen(f"{self.base}/samples/{algorithm}.json") as res:
+                    self.assertEqual(res.headers.get_content_type(), "application/json")
+                    report = json.load(res)
+                report = report_from_file(f"{algorithm}.json", json.dumps(report).encode())
+                self.assertEqual(report["run"]["dispatcher"], algorithm)
+                self.assertEqual(report["averaged"]["runs"], 10)
+                self.assertEqual(len(report["passengers"]["trip_percentiles"]), 101)
+        with urllib.request.urlopen(f"{self.base}/?sample=scan") as res:      # the page a sample tab opens
+            self.assertIn('id="view-import"', res.read().decode())
 
 
 if __name__ == "__main__":

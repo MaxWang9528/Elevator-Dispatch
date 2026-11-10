@@ -137,10 +137,11 @@ for (const btn of document.querySelectorAll(".run-mode")) {
   btn.addEventListener("click", () => startRun({ mode: btn.dataset.mode }));
 }
 
-// The chosen hours are remembered in this browser.
+// The chosen hours are remembered in this browser. (The ".v2" keys started over when the
+// default became the whole day, 0:00 to 23:59.)
 for (const id of ["runStart", "runStop"]) {
   try {
-    const saved = localStorage.getItem(id);
+    const saved = localStorage.getItem(`${id}.v2`);
     if (/^\d\d:\d\d$/.test(saved || "")) $(id).value = saved;
   } catch { /* storage unavailable: keep the defaults */ }
 }
@@ -152,8 +153,8 @@ $("runForm").addEventListener("submit", (e) => {
     return;
   }
   try {
-    localStorage.setItem("runStart", start);
-    localStorage.setItem("runStop", stop);
+    localStorage.setItem("runStart.v2", start);
+    localStorage.setItem("runStop.v2", stop);
   } catch { /* fine without */ }
   startRun({ mode: "custom", start, stop });
 });

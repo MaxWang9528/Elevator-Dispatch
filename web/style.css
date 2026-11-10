@@ -582,8 +582,14 @@ a.btn { text-decoration: none; display: inline-block; }
 .drop-zone p { margin: 0; }
 .import-msg { margin: 14px 0 0; min-height: 1.45em; color: var(--muted); }
 .import-msg.is-error { color: var(--down); }
-.import-recent { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--rule); }
-.import-recent h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; }
+.import-recent,
+.import-samples { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.import-recent h2,
+.import-samples h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; }
+.import-samples > p:not(.import-msg) { margin: 0 0 14px; max-width: 62ch; color: var(--muted); }
+.sample-links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; }
+.sample-nav { border-left-color: var(--muted); }
+.sample-buttons { flex-wrap: wrap; }
 .import-recent ul { list-style: none; margin: 0; padding: 0; }
 .import-recent li {
   display: flex;

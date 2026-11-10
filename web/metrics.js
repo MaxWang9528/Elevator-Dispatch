@@ -483,7 +483,7 @@ class MetricsView {
 
     this.tiles([
       ["Average wait", fmt.secs(p.wait.mean),
-        p.waiting ? `includes ${fmt.int(p.waiting)} still waiting` : `${fmt.int(p.measured)} people`],
+        Math.round(p.waiting || 0) ? `includes ${fmt.int(p.waiting)} still waiting` : `${fmt.int(p.measured)} people`],
       ["95th percentile wait", fmt.secs(p.wait.p95), "1 person in 20 waits longer"],
       [`Waits over ${r.long_wait} s`, fmt.pct(p.long_wait_share), `${fmt.int(p.long_waits)} of ${fmt.int(p.measured)} people`],
       ["Average trip", fmt.secs(p.trip.mean), "button press to arrival"],

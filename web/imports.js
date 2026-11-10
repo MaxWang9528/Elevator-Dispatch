@@ -5,6 +5,13 @@
 
 const IMPORT_STORE = "elevatorImports.v2";
 const IMPORT_KEEP = 8;      // most recent imports remembered
+// Sample data (web/samples): each algorithm's whole-day results, averaged over 10 runs. The
+// Sample data buttons open one in a new browser tab, as /?sample=<id>#import.
+const SAMPLES = [
+  { id: "lookahead", title: "Sample: Lookahead" },
+  { id: "nearest", title: "Sample: Nearest car" },
+  { id: "scan", title: "Sample: SCAN" },
+];
 
 class ImportTab {
   constructor() {
@@ -37,6 +44,42 @@ class ImportTab {
       if (e.dataTransfer.files[0]) this.importFile(e.dataTransfer.files[0]);
     });
     this.renderRecent();
+    const sample = new URLSearchParams(location.search).get("sample");
+    if (sample) this.loadSample(sample);
+  }
+
+  // ---- sample data ---------------------------------------------------------------------------------
+  sampleUrl(id) {
+    return `${location.pathname}?sample=${encodeURIComponent(id)}#import`;
+  }
+
+  async loadSample(id) {
+    const sample = SAMPLES.find((s) => s.id === id);
+    if (!sample) {
+      this.setMessage(`There's no sample called "${id}". Choose one under Sample data.`, true);
+      return;
+    }
+    this.setMessage(`Loading ${sample.title}…`);
+    try {
+      const res = await fetch(`samples/${sample.id}.json`);
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
+      const report = await res.json();
+      this.setMessage("");
+      document.title = `${sample.title} – Elevator simulator`;
+      this.show({ name: sample.title, report });      // shown, not added to the imports list
+      this.showSampleNav(sample);
+    } catch (err) {
+      this.setMessage(`Couldn't load ${sample.title}: ${err.message}.`, true);
+    }
+  }
+
+  /** Under a sample's title: links to the other samples, each opening in its own tab. */
+  showSampleNav(sample) {
+    document.getElementById("sampleNav")?.remove();
+    const links = SAMPLES.filter((s) => s !== sample).map((s) =>
+      el("a", { href: this.sampleUrl(s.id), target: "_blank", rel: "noopener" }, s.title));
+    this.view.$("mNotice").before(el("div", { class: "notice notice-info sample-nav", id: "sampleNav" },
+      "Other samples:", el("span", { class: "sample-links" }, ...links)));
   }
 
   async importFile(file) {
@@ -69,6 +112,7 @@ class ImportTab {
       back.addEventListener("click", () => this.showStart());
       this.view = new MetricsView(this.shown, { prefix: "imp-", title: "", actions: [back, another] });
     }
+    document.getElementById("sampleNav")?.remove();      // only a sample's own tab has it
     this.view.$("mTitle").textContent = entry.name;
     this.start.hidden = true;
     this.shown.hidden = false;

@@ -51,9 +51,9 @@
           <button type="button" class="btn grow run-mode" id="runEvening" data-mode="evening">Evening rush<small id="runEveningHours"></small></button>
         </div>
         <form class="run-hours" id="runForm">
-          <input type="time" id="runStart" value="06:00" aria-label="Start time" required>
+          <input type="time" id="runStart" value="00:00" aria-label="Start time" required>
           <span>to</span>
-          <input type="time" id="runStop" value="20:00" aria-label="Stop time" required>
+          <input type="time" id="runStop" value="23:59" aria-label="Stop time" required>
           <button type="submit" class="btn">Run</button>
         </form>
         <button type="button" class="btn run-mode" id="runSteady" data-mode="steady">Steady traffic<small>No time of day, no rush hours</small></button>
@@ -226,6 +226,15 @@
         <p class="hint">A report has everything. A trips file has every passenger but doesn't record the elevators or hall buttons.</p>
       </div>
       <p class="import-msg" id="importMsg" role="status" aria-live="polite"></p>
+      <div class="import-samples">
+        <h2>Sample data</h2>
+        <p>Each algorithm over a whole day, 0:00 to 23:59, averaged over 10 runs with the same residents. Each one opens in its own browser tab, so you can switch between them.</p>
+        <div class="inline sample-buttons">
+          <a class="btn" href="?sample=lookahead#import" target="_blank" rel="noopener">Lookahead</a>
+          <a class="btn" href="?sample=nearest#import" target="_blank" rel="noopener">Nearest car</a>
+          <a class="btn" href="?sample=scan#import" target="_blank" rel="noopener">SCAN</a>
+        </div>
+      </div>
       <div class="import-recent" id="importRecent" hidden>
         <h2>Imported before</h2>
         <ul id="importList"></ul>

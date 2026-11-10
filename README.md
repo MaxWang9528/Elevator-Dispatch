@@ -1,4 +1,5 @@
 # Elevator simulator
+https://elevator-dispatch.onrender.com/
 
 A multi-elevator apartment building simulation (Python, standard library only) with a live
 web visualization. Defaults approximate Marquee at Block 37 in Chicago: 38 floors served by
@@ -132,6 +133,12 @@ tab showed for that run; it doesn't record the elevators or the hall buttons, so
 are blank. Trips files carry the run's algorithm, seed, warm-up, long-wait threshold, chart
 interval and length on every row so they can be read back on their own (older files still
 import, with those worked out from the trips). Recent imports are remembered in the browser.
+
+**Sample data.** The Import tab has a button for each algorithm under Sample data. Each opens
+that algorithm's whole day (0:00 to 23:59) averaged over 10 runs (seeds 1 to 10, the same
+residents for all three) in a new browser tab, which links to the other two. They are fixed
+files in `web/samples/` (`lookahead.json`, `nearest.json`, `scan.json`); one opens directly at
+`/?sample=scan#import`.
 
 **What is measured.** People who appear before the warm-up period (Settings, default 5 minutes)
 are left out, and car, queue and hall-call figures only cover time after it, so the start from
