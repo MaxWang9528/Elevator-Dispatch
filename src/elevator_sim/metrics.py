@@ -388,6 +388,9 @@ class MetricsCollector:
         bucket_waits: dict[int, list[float]] = {}
         bucket_delivered: dict[int, int] = {}
         bucket_still_waiting: dict[int, int] = {}
+        bucket_rides: dict[int, list[float]] = {}     # delivered people, by when they pressed the button
+        bucket_trips: dict[int, list[float]] = {}
+        bucket_unfinished: dict[int, int] = {}       # not delivered yet, by when they pressed the button
         waiting = riding = changing = delivered = 0
         long_waits = left_people = left_events = 0
         change_waits: list[float] = []      # waits for a second (or later) car, after changing
@@ -414,7 +417,10 @@ class MetricsCollector:
             direction["waits"].append(wait)
             floor_waits[j.origin].append(wait)
             floor_to[j.destination] += 1
-            bucket_waits.setdefault(self._bucket_index(j.start), []).append(wait)
+            start_index = self._bucket_index(j.start)
+            bucket_waits.setdefault(start_index, []).append(wait)
+            if status != "delivered":
+                bucket_unfinished[start_index] = bucket_unfinished.get(start_index, 0) + 1
             if j.left_behind:
                 left_people += 1
                 left_events += j.left_behind
@@ -425,6 +431,8 @@ class MetricsCollector:
                 rides.append(j.ride)
                 trip = j.trip
                 trips.append(trip)
+                bucket_rides.setdefault(start_index, []).append(j.ride)
+                bucket_trips.setdefault(start_index, []).append(trip)
                 direction["trips"].append(trip)
                 direction["stops"].append(j.stops_en_route)
                 stops.append(j.stops_en_route)
@@ -453,8 +461,11 @@ class MetricsCollector:
         for index in range(min(indices), max(indices) + 1) if indices else ():
             bucket = self._buckets.get(index, _Bucket())
             dist = distribution(bucket_waits.get(index, ()))
+            ride_dist = distribution(bucket_rides.get(index, ()))
+            trip_dist = distribution(bucket_trips.get(index, ()))
             end = (index + 1) * self.bucket_seconds
             still_waiting = bucket_still_waiting.get(index, 0)
+            unfinished = bucket_unfinished.get(index, 0)
             complete = end <= now + 1e-6
             timeline.append({
                 "t0": index * self.bucket_seconds,
@@ -466,10 +477,18 @@ class MetricsCollector:
                 # building (where they may never board) still shows up.
                 "settled": complete and (still_waiting == 0 or now >= end + self.bucket_seconds),
                 "still_waiting": still_waiting,
+                # The same for rides and whole trips, which only count people once they arrive:
+                # until everyone from the interval has, the slowest are missing from its figures.
+                "trips_settled": complete and (unfinished == 0 or now >= end + self.bucket_seconds),
+                "unfinished": unfinished,
                 "arrived": dist["n"],
                 "delivered": bucket_delivered.get(index, 0),
                 "wait_mean": dist["mean"],
                 "wait_p95": dist["p95"],
+                "ride_mean": ride_dist["mean"],
+                "ride_p95": ride_dist["p95"],
+                "trip_mean": trip_dist["mean"],
+                "trip_p95": trip_dist["p95"],
                 "avg_waiting": _ratio(bucket.waiting_seconds, bucket.seconds, 2),
                 "peak_waiting": bucket.peak_waiting,
             })

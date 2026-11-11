@@ -124,15 +124,50 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 34vw, 480px);
+  grid-template-columns: minmax(0, 1fr) 8px var(--panel-width, clamp(320px, 34vw, 480px));
   min-height: 0;
 }
+.app.panel-collapsed { grid-template-columns: minmax(0, 1fr) 8px 0; }
+.app.panel-collapsed > .panel { display: none; }
+.app.resizing { cursor: col-resize; user-select: none; }
+
+/* ---- the divider between the building and the panel: drag to resize, button to collapse ---- */
+.splitter {
+  position: relative;
+  cursor: col-resize;
+  background: var(--rule);
+  background-clip: content-box;
+  padding: 0 3.5px;
+  touch-action: none;
+  z-index: 2;
+}
+.splitter:hover, .splitter:focus-visible, .app.resizing .splitter {
+  background: var(--amber);
+  padding: 0 2.5px;
+  outline: none;
+}
+.panel-toggle {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.panel-toggle:hover, .panel-toggle:focus-visible { border-color: var(--amber); }
 
 /* ---- building ---- */
 .tower {
   position: relative;
   min-width: 0;
-  border-right: 1px solid var(--rule);
 }
 .tower-scroll {
   position: absolute;
@@ -141,6 +176,24 @@ body {
   overflow-y: auto;
 }
 #tower { display: block; cursor: pointer; }
+
+/* Drag to share the width between the floors (queues) and the elevator shafts. */
+.corridor-divider {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  background-clip: content-box;
+  padding: 0 3px;
+}
+.tower:hover .corridor-divider { background-color: var(--rule); }
+.corridor-divider:hover, .corridor-divider:focus-visible, .corridor-divider.dragging {
+  background-color: var(--amber) !important;
+  padding: 0 2.5px;
+  outline: none;
+}
 
 .banner {
   position: absolute;
@@ -889,10 +942,12 @@ input:disabled { opacity: 0.55; }
 @media (max-width: 760px) {
   body { height: auto; min-height: 100vh; }
   .topbar { padding: 0 16px; gap: 16px; }
-  .app {
+  .app, .app.panel-collapsed {
     grid-template-columns: 1fr;
     grid-template-rows: 72vh auto;
   }
+  .splitter { display: none; }
+  .app.panel-collapsed > .panel { display: flex; }
   .settings { padding: 24px 16px 0; }
   .metrics { padding: 24px 16px 40px; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

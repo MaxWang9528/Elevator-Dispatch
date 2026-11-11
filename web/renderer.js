@@ -29,6 +29,7 @@ class TowerRenderer {
     this.readColors();
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.readColors());
     new ResizeObserver(() => this.resize()).observe(scroller);
+    this.setupCorridorDivider();
     canvas.addEventListener("mousemove", (e) => { this.hoverFloor = this.floorAt(e); });
     canvas.addEventListener("mouseleave", () => { this.hoverFloor = null; });
     requestAnimationFrame((t) => this.loop(t));
@@ -60,6 +61,51 @@ class TowerRenderer {
     this.curAt = now;
   }
 
+  // ---- the divider between the floors (queues) and the elevators -----------------------
+  // Drag it to give the queues or the shafts more room; double-click resets. Remembered in this browser.
+  setupCorridorDivider() {
+    const KEY = "elevator.corridorWidth";
+    try { this.corridorPx = Number(localStorage.getItem(KEY)) || null; } catch { this.corridorPx = null; }
+    const save = () => {
+      try { this.corridorPx ? localStorage.setItem(KEY, String(this.corridorPx)) : localStorage.removeItem(KEY); } catch { /* not kept */ }
+    };
+    const d = document.createElement("div");
+    d.className = "corridor-divider";
+    d.tabIndex = 0;
+    d.setAttribute("role", "separator");
+    d.setAttribute("aria-orientation", "vertical");
+    d.setAttribute("aria-label", "Resize the floors and the elevators (arrow keys; double-click to reset)");
+    d.hidden = true;
+    this.scroller.append(d);
+    this.divider = d;
+    const set = (px) => { this.corridorPx = px === null ? null : Math.round(px); this.resize(); save(); };
+    d.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !this.g) return;
+      e.preventDefault();
+      d.setPointerCapture(e.pointerId);
+      d.classList.add("dragging");
+      const startX = e.clientX, startW = this.g.corridorW;
+      const move = (ev) => set(startW + ev.clientX - startX);
+      const up = () => {
+        d.classList.remove("dragging");
+        d.removeEventListener("pointermove", move);
+        d.removeEventListener("pointerup", up);
+        d.removeEventListener("pointercancel", up);
+      };
+      d.addEventListener("pointermove", move);
+      d.addEventListener("pointerup", up);
+      d.addEventListener("pointercancel", up);
+    });
+    d.addEventListener("click", (e) => e.stopPropagation());
+    d.addEventListener("dblclick", () => set(null));
+    d.addEventListener("keydown", (e) => {
+      if (!this.g || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      e.preventDefault();
+      const step = (e.shiftKey ? 60 : 15) * (e.key === "ArrowLeft" ? -1 : 1);
+      set(this.g.corridorW + step);
+    });
+  }
+
   // ---- geometry ------------------------------------------------------------------------
   resize() {
     if (!this.layout) return;
@@ -78,10 +124,18 @@ class TowerRenderer {
     const breaks = groupOf.filter((grp, i) => i > 0 && grp !== groupOf[i - 1]).length;
     g.gap = cars > 30 ? 2 : cars > 8 ? 6 : 10;
     g.groupGap = breaks ? g.gap + 10 : g.gap;
-    const room = w - 2 * side - labelW - lanternW - 120 - breaks * (g.groupGap - g.gap);
-    g.shaftW = clamp(room / cars - g.gap, cars > 16 ? 4 : 18, 60);
-    g.shaftsW = cars * g.shaftW + (cars - 1) * g.gap + breaks * (g.groupGap - g.gap);
-    const corridorW = clamp(w - 2 * side - labelW - lanternW - g.shaftsW, 80, 190);
+    const minShaft = cars > 16 ? 4 : 18;
+    const gapsW = (cars - 1) * g.gap + breaks * (g.groupGap - g.gap);
+    const fixedW = 2 * side + labelW + lanternW;
+    // A dragged corridor width wins; the shafts take what's left (between their min and max width).
+    const chosen = this.corridorPx
+      ? clamp(this.corridorPx, 60, Math.max(60, w - fixedW - gapsW - cars * minShaft))
+      : 120;
+    const room = w - fixedW - chosen - breaks * (g.groupGap - g.gap);
+    g.shaftW = clamp(room / cars - g.gap, minShaft, 60);
+    g.shaftsW = cars * g.shaftW + gapsW;
+    const corridorW = this.corridorPx ? chosen : clamp(w - fixedW - g.shaftsW, 80, 190);
+    g.corridorW = corridorW;
     const total = labelW + corridorW + lanternW + g.shaftsW;
     g.left = Math.max(side, (w - total) / 2);
     g.labelX = g.left + labelW;              // right edge of the floor labels
@@ -119,6 +173,11 @@ class TowerRenderer {
     g.dotStep = 2 * g.dotR + 2.2;
     g.maxQueueDots = Math.max(1, Math.floor((g.queueRight - g.queueLeft - 26) / g.dotStep));
     this.g = g;
+    if (this.divider) {
+      this.divider.hidden = false;
+      this.divider.style.left = `${g.queueRight - 4}px`;
+      this.divider.style.height = `${g.height}px`;
+    }
 
     const dpr = window.devicePixelRatio || 1;
     this.canvas.style.width = `${w}px`;

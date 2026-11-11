@@ -3,6 +3,8 @@
 Deployed version with limited functionality:
 https://elevator-dispatch.onrender.com/
 
+Or download the desktop app for Windows or macOS (see [Desktop app](#desktop-app)).
+
 A multi-elevator apartment building simulation (Python, standard library only) with a live
 web visualization. Defaults approximate Marquee at Block 37 in Chicago: 38 floors served by
 6 elevators, ~1,000 residents, with special floors for the lobby (1), parking / Block 37 mall /
@@ -46,6 +48,42 @@ instead of the saved ones:
 PYTHONPATH=src python3 -m elevator_sim.report --preset "Tower, 60 floors" --rush morning
 PYTHONPATH=src python3 -m elevator_sim.compare --preset "Mid-rise, 12 floors" --seeds 1-10
 ```
+
+## Desktop app
+
+The [Releases page](https://github.com/MaxWang9528/Elevator-Dispatch/releases) has a download for
+**Windows** (`ElevatorSimulator-windows.zip`) and **macOS** on Apple Silicon (`ElevatorSimulator-macos.zip`).
+Nothing needs to be installed: unzip it and double-click **ElevatorSimulator**. A small window
+opens with the simulator's address, and the simulator opens in the default browser. Keep that window
+open while using it; closing it stops the simulator. It uses port 8000, or any free port if 8000
+is taken, and only this computer can reach it.
+
+The app isn't code-signed, so the first launch shows a warning:
+
+- **Windows** (SmartScreen, "Windows protected your PC"): click **More info**, then **Run anyway**.
+- **macOS** ("can't be opened because Apple cannot check it"): right-click the file and choose **Open**,
+  then **Open** again. Or, after the warning, go to System Settings → Privacy & Security and click
+  **Open Anyway**. It opens in Terminal.
+
+Settings and presets are saved per user: `%APPDATA%\Elevator Simulator\` on Windows and
+`~/Library/Application Support/Elevator Simulator/` on macOS. They're kept when the app is
+replaced by a newer version. `PYTHONPATH=src python3 -m elevator_sim.app` runs the same launcher
+from source.
+
+**Making a release.** Pushing a version tag builds both apps on GitHub Actions
+(`.github/workflows/release.yml`), runs the tests and a smoke test of each build, and publishes a
+release with both downloads:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Running the workflow by hand (Actions → Desktop app → Run workflow) builds both without
+publishing them; the zips are on the run's page under Artifacts. To build one yourself, on the
+platform it's for: `pip install ".[app]"`, then `pyinstaller packaging/elevator-sim.spec`, which
+writes `dist/ElevatorSimulator` (`.exe` on Windows). Intel Macs aren't covered: that needs an
+Intel macOS build.
 
 ## Run
 
@@ -287,7 +325,7 @@ an empty building with every car parked at the lobby doesn't skew a comparison.
 | Moving / doors / idle | Share of each car's time. |
 | Riders at departure, full departures, peak load | How full cars are when their doors close. |
 | Floors traveled per person | Total distance divided by people delivered: lower is more efficient. |
-| Over time | Per interval (default 5 minutes), by when people pressed the button: people arriving, delivered, average and 95th percentile wait, average and peak number waiting. |
+| Over time | Per interval (default 5 minutes), by when people pressed the button: people arriving, delivered, average and 95th percentile wait, ride and whole trip (rides and trips count people once they arrive), average and peak number waiting. |
 | By floor | Trips from and to each floor, and average, 95th percentile and longest wait by starting floor. A floor far above the rest is being served unfairly. |
 
 Counts on the Simulation tab (waiting, riding, delivered) are everyone in the building right now;
@@ -319,6 +357,8 @@ src/elevator_sim/
   settings.py     Settings (+ schema for the UI), validation, JSON store, make_simulation()
   presets.py      built-in presets and PresetStore (saved presets, JSON)
   server.py       web server: static files, live frames (SSE), controls, runs, settings API
+  app.py          desktop app launcher: per-user settings folder, free port, opens the browser
+packaging/        PyInstaller spec and entry point for the desktop app
 web/              index.html, style.css, renderer.js (canvas), metrics.js (tables + charts),
                   settings.js, app.js
 ```

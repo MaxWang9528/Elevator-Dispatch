@@ -11,6 +11,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+app = ["pyinstaller>=6.11,<7"]   # to build the desktop app (packaging/elevator-sim.spec)
 
 [tool.setuptools.packages.find]
 where = ["src"]

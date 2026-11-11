@@ -29,7 +29,13 @@
       <div class="banner" id="banner" role="alert" hidden></div>
     </section>
 
-    <aside class="panel">
+    <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0"
+         aria-label="Resize the side panel (arrow keys; double-click to reset)" aria-controls="sidePanel">
+      <button type="button" class="panel-toggle" id="panelToggle" aria-controls="sidePanel"
+              aria-expanded="true" aria-label="Collapse the side panel" title="Collapse panel">›</button>
+    </div>
+
+    <aside class="panel" id="sidePanel">
       <header class="panel-head">
         <p class="clock" id="clock" aria-label="Simulated time">0:00:00</p>
         <p class="run-note" id="runNote">Time since the run began</p>
@@ -176,6 +182,12 @@
           <h2 id="mgTime">Over time</h2>
           <figure class="chart" id="mWaitChart">
             <figcaption><strong>Wait, by when people arrived</strong> People are grouped by when they pressed the button, in <span data-interval>5-minute</span> intervals. An interval appears once it has ended and the people who arrived in it have boarded.</figcaption>
+          </figure>
+          <figure class="chart" id="mRideChart">
+            <figcaption><strong>Ride, by when people arrived</strong> Boarding to arrival, for the same <span data-interval>5-minute</span> groups. An interval appears once the people who arrived in it have reached their floors.</figcaption>
+          </figure>
+          <figure class="chart" id="mWholeTripChart">
+            <figcaption><strong>Whole trip, by when people arrived</strong> Pressing the button to arrival: wait and ride together, plus any walk between cars.</figcaption>
           </figure>
           <figure class="chart" id="mQueueChart">
             <figcaption><strong>People waiting</strong> The average number waiting across the building during each <span data-interval>5-minute</span> interval.</figcaption>
@@ -362,5 +374,6 @@
   <script src="metrics.js"></script>
   <script src="imports.js"></script>
   <script src="app.js"></script>
+  <script src="layout.js"></script>
 </body>
 </html>

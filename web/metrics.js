@@ -389,6 +389,29 @@ class MetricsView {
       columns: timeColumns,
       empty: "The first interval hasn't settled yet.",
     });
+    // Ride and whole trip over time: the wait chart's shape, but only people who have arrived count.
+    const tripColumns = (key, what) => [
+      { title: "Interval starts", get: (b) => this.clock(b.t0) },
+      { title: "People arriving", get: (b) => fmt.int(b.arrived), num: true },
+      { title: `Average ${what} (s)`, get: (b) => secs(b[`${key}_mean`]), num: true },
+      { title: `95th percentile ${what} (s)`, get: (b) => secs(b[`${key}_p95`]), num: true },
+    ];
+    const overTime = (figure, key, what) => new Chart(this.$(figure), {
+      type: "line", yKind: "time", endLabels: true,
+      label: `Line chart of average and 95th percentile ${what}, by when people arrived`,
+      series: [
+        { key: `${key}_mean`, name: "Average", color: "--series-1" },
+        { key: `${key}_p95`, name: "95th percentile", color: "--series-2" },
+      ],
+      xTick: (b) => this.clock(b.t0),
+      tipTitle: bucketTitle,
+      tipValue: fmt.secs,
+      tipExtra: (b) => [["people arriving", fmt.int(b.arrived)]],
+      columns: tripColumns(key, what),
+      empty: "The first interval hasn't settled yet.",
+    });
+    this.rideChart = overTime("mRideChart", "ride", "ride");
+    this.wholeTripChart = overTime("mWholeTripChart", "trip", "whole trip");
     this.queueChart = new Chart(this.$("mQueueChart"), {
       type: "line", yKind: "count", area: true, padRight: 112,
       label: "Line chart of the average number of people waiting over time",
@@ -554,6 +577,17 @@ class MetricsView {
     // waits-so-far are short, which would draw a misleading dive at the right edge.
     const finished = r.timeline.filter((b) => b.settled);
     this.waitChart.setData(finished);
+    // Rides and trips settle later: an interval's slowest people are the last to arrive.
+    // Reports saved before these were recorded have no trips_settled (and no ride figures).
+    const recorded = r.timeline.some((b) => "trips_settled" in b);
+    for (const chart of [this.rideChart, this.wholeTripChart]) {
+      chart.emptyEl.textContent = recorded || !finished.length
+        ? "The first interval hasn't settled yet."
+        : "This report was saved before rides and trips were recorded over time. Import its trips file (CSV) to see this chart.";
+    }
+    const arrivedAll = r.timeline.filter((b) => b.trips_settled);
+    this.rideChart.setData(arrivedAll);
+    this.wholeTripChart.setData(arrivedAll);
     this.queueChart.setData(finished);
     this.floorChart.setData(r.by_floor);
   }

@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import random
+import sys
 import csv
 import io
 import json
@@ -578,14 +579,32 @@ def main(argv: list[str] | None = None) -> None:
     if not (args.web_dir / "index.html").is_file():
         raise SystemExit(f"web files not found in {args.web_dir} (use --web-dir)")
 
-    session = Session(SettingsStore(args.settings))
-    threading.Thread(target=session.run_forever, name="sim", daemon=True).start()
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(session, args.web_dir))
-    server.daemon_threads = True
+    server, session = create_server(args.host, args.port, args.web_dir, args.settings)
     shown = "localhost" if args.host in ("0.0.0.0", "127.0.0.1") else args.host
     log.info("Settings file: %s", args.settings)
     log.info("Presets file: %s", session.presets.path)
-    log.info("Elevator simulator running at http://%s:%d  (Ctrl+C to stop)", shown, args.port)
+    log.info("Elevator simulator running at http://%s:%d  (Ctrl+C to stop)", shown, server.server_address[1])
+    serve(server)
+
+
+class _Server(ThreadingHTTPServer):
+    # On Windows, SO_REUSEADDR lets a second server bind a port another one is already using
+    # (and then neither works reliably), so binding there must fail instead.
+    allow_reuse_address = sys.platform != "win32"
+    daemon_threads = True
+
+
+def create_server(host: str, port: int, web_dir: Path, settings_path: Path) -> tuple[ThreadingHTTPServer, Session]:
+    """Bind the web server (port 0 picks a free one) and start the simulation thread.
+    Raises OSError if the port can't be used; nothing is started then."""
+    session = Session(SettingsStore(settings_path))
+    server = _Server((host, port), make_handler(session, web_dir))
+    threading.Thread(target=session.run_forever, name="sim", daemon=True).start()
+    return server, session
+
+
+def serve(server: ThreadingHTTPServer) -> None:
+    """Serve until Ctrl+C (or the window is closed)."""
     try:
         server.serve_forever()
     except KeyboardInterrupt:

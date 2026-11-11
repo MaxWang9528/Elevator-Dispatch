@@ -244,6 +244,22 @@ class TestUnderTraffic(unittest.TestCase):
         self.assertAlmostEqual(r["system"]["arrivals_per_hour"], r["passengers"]["measured"] * 3, delta=0.5)
         self.assertGreater(r["hall_calls"]["answered"], 100)
 
+    def test_timeline_rides_and_trips(self):
+        # Rides and trips by interval count the delivered people from that interval, grouped by
+        # when they pressed the button, and are settled only once all of them have arrived.
+        r, p = self.report, self.report["passengers"]
+        self.assertEqual(sum(b["unfinished"] for b in r["timeline"]), p["measured"] - p["delivered"])
+        for b in r["timeline"]:
+            if b["ride_mean"] is None:
+                continue
+            self.assertLessEqual(b["ride_mean"], b["trip_mean"])
+            self.assertLessEqual(b["ride_mean"], b["ride_p95"])
+            self.assertLessEqual(b["trip_mean"], b["trip_p95"])
+            if b["trips_settled"] and b["unfinished"] == 0:
+                self.assertTrue(b["settled"])
+        self.assertTrue(any(b["trips_settled"] for b in r["timeline"]))
+        self.assertFalse(r["timeline"][-1]["trips_settled"])     # the interval still in progress
+
     def test_report_is_json_and_text_ready(self):
         json.dumps(self.report)
         text = report_cli.format_report(self.report)

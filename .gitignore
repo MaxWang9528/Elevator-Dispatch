@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 recordings/
 data/
+# desktop app build output (packaging/elevator-sim.spec)
+build/
+dist/
