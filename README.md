@@ -1,9 +1,9 @@
 # Elevator simulator
 
-Deployed version with limited functionality:
-https://elevator-dispatch.onrender.com/
+~~Deployed version with limited functionality:
+https://elevator-dispatch.onrender.com/~~
 
-Or download the desktop app for Windows or macOS (see [Desktop app](#desktop-app)).
+Download the desktop app for Windows or macOS (see [Desktop app](#desktop-app)).
 
 A multi-elevator apartment building simulation (Python, standard library only) with a live
 web visualization. Defaults approximate Marquee at Block 37 in Chicago: 38 floors served by
