@@ -32,7 +32,7 @@ from typing import Any
 from .clock import RunPlan, format_time, parse_time
 from .dispatchers import DISPATCHERS
 from .enums import Direction, FloorKind
-from .metrics import percentile
+from .metrics import journeys, percentile
 from .presets import load_preset
 from .settings import Settings, SettingsError, SettingsStore, make_simulation
 
@@ -97,20 +97,18 @@ def summarize(sim) -> dict[str, float | None]:
     report = sim.report()
     p, fleet = report["passengers"], report["fleet"]
     now, metrics = sim.time, sim.metrics
-    measured = [x for x in sim.people.values() if metrics.measures(x)]
-
-    def wait(x) -> float:
-        return (x.board_time if x.board_time is not None else now) - x.spawn_time
+    # Per journey, like the report: a change of cars is one person with its waits added.
+    measured = [j for j in journeys(sim.people.values(), now) if metrics.measures(j.first)]
 
     # The busiest hour of the run (most people pressing a button), and its 95th percentile.
     by_hour: dict[int, list[float]] = defaultdict(list)
-    for x in measured:
-        by_hour[int(x.spawn_time // 3600)].append(wait(x))
+    for j in measured:
+        by_hour[int(j.start // 3600)].append(j.wait)
     busiest = max(by_hour.values(), key=len, default=[])
     parking = {f.index for f in sim.building.floors if f.kind is FloorKind.PARKING}
-    upper = [wait(x) for x in measured
-             if x.direction is Direction.DOWN and x.origin_floor >= UPPER_FLOOR - 1]
-    garage_up = [wait(x) for x in measured if x.direction is Direction.UP and x.origin_floor in parking]
+    upper = [j.wait for j in measured
+             if j.direction is Direction.DOWN and j.origin >= UPPER_FLOOR - 1]
+    garage_up = [j.wait for j in measured if j.direction is Direction.UP and j.origin in parking]
     delivered = [c["delivered"] for c in report["cars"]]
     total = sum(delivered)
 

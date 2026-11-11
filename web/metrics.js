@@ -507,15 +507,16 @@ class MetricsView {
     this.facts("mPassengerFacts", [
       ["Still waiting", fmt.int(p.waiting)],
       ["Riding now", fmt.int(p.riding)],
+      ...(p.changing ? [["Changing cars now", fmt.int(p.changing)]] : []),
       ["Delivered", fmt.int(p.delivered)],
       ["Left behind by a full car", `${fmt.int(p.left_behind_people)} people, ${fmt.int(p.left_behind_events)} times`],
-      ["Other stops during a ride, average", fmt.dec(p.stops_per_ride, 2)],
+      ["Other stops on the way, average", fmt.dec(p.stops_per_ride, 2)],
       ["Straight shots", p.delivered
         ? `${fmt.pct(p.straight_shot_share)}, ${fmt.int(p.straight_shots)} of ${fmt.int(p.delivered)} delivered`
         : fmt.none],
       ...(p.changes ? [
-        ["Rides after changing cars", `${fmt.int(p.changes)}, waiting ${fmt.secs(p.change_wait.mean)} on average`
-          + ` (95th percentile ${fmt.secs(p.change_wait.p95)})`],
+        ["Changes of car", `${fmt.int(p.changes)}, waiting ${fmt.secs(p.change_wait.mean)} on average for the next car`
+          + ` (95th percentile ${fmt.secs(p.change_wait.p95)}). Waits above add these in.`],
         ["Whole journey when changing cars", p.journeys_with_change
           ? `${fmt.secs(p.journey_with_change.mean)} on average, 95th percentile ${fmt.secs(p.journey_with_change.p95)}`
             + `, ${fmt.int(p.journeys_with_change)} journeys`

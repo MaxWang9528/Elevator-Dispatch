@@ -60,7 +60,7 @@ class NearestCarDispatcher:
         if d is Direction.IDLE:
             return car.travel_time(call.floor - pos) + stops
 
-        offset = (call.floor - pos) * d.value
+        offset = (call.floor - pos) * d.sign
         # A moving car can only stop where it has room to brake; a stopped one can open here.
         if car.state is CarState.MOVING:
             on_the_way = car.can_stop_at(call.floor, d)
@@ -172,7 +172,7 @@ class ScanDispatcher:
             return False
         if car.state is CarState.MOVING:
             return car.can_stop_at(call.floor, d)
-        return (call.floor - car.position) * d.value > -1e-9
+        return (call.floor - car.position) * d.sign > -1e-9
 
     def _passing_car(self, call: HallCall, manager: ElevatorManager) -> Elevator | None:
         passing = [c for c in manager.elevators if self._passes(c, call)]
@@ -184,7 +184,7 @@ class ScanDispatcher:
         """Floors the car travels, sweeping in direction d, before it passes the call going its way."""
         p, f = car.position, call.floor
         moving = car.state is CarState.MOVING and car.direction is d
-        ahead = car.can_stop_at(f, d) if moving else (f - p) * d.value > -1e-9
+        ahead = car.can_stop_at(f, d) if moving else (f - p) * d.sign > -1e-9
         if call.direction is d and ahead:
             return abs(f - p)
         end = self._end(car, d)
@@ -249,12 +249,14 @@ class Parker:
 
     def step(self, manager: ElevatorManager, demand: CallDemand, now: float) -> None:
         cars = manager.elevators
-        for car in cars:
-            if _has_nothing_to_do(car):
-                self._idle_since.setdefault(car.id, now)
-            else:
-                self._idle_since.pop(car.id, None)
-                self._checked.pop(car.id, None)
+        idle_since, checked, idle = self._idle_since, self._checked, CarState.IDLE
+        for car in cars:          # every tick, so _has_nothing_to_do is written out here
+            if car.state is idle and not car.car_calls and not car.hall_stops:
+                if car.id not in idle_since:
+                    idle_since[car.id] = now
+            elif idle_since:
+                idle_since.pop(car.id, None)
+                checked.pop(car.id, None)
         if now < self._next_run:
             return
         self._next_run = now + self.interval
@@ -356,6 +358,10 @@ class LookaheadDispatcher:
         self._seen: weakref.WeakSet[HallCall] = weakref.WeakSet()
         self._next_check = 0.0
         self.reassignments = 0
+        # Routes without the call being priced, which are the same for every call a car is
+        # priced for. Keyed by everything _route reads, and emptied every tick.
+        self._routes: dict[tuple, dict] = {}
+        self._routes_at: float | None = None
 
     # --- the manager calls these ---------------------------------------------------------
     def assign(self, call: HallCall, manager: ElevatorManager) -> Elevator | None:
@@ -363,9 +369,24 @@ class LookaheadDispatcher:
         if not candidates:
             return None
         now = manager.now
-        return min(candidates, key=lambda c: (self.cost(c, call, now), c.odometer, c.id))
+        self._fresh(now)
+        # min() by (cost, odometer, id), skipping cars that can't even tie the best so far.
+        best, best_key = None, None
+        for car in candidates:
+            if best_key is not None and self._least_cost(car, call, now) - 1e-9 > best_key[0]:
+                continue
+            key = (self.cost(car, call, now), car.odometer, car.id)
+            if best_key is None or key < best_key:
+                best, best_key = car, key
+        return best
+
+    def _fresh(self, now: float) -> None:
+        if now != self._routes_at:
+            self._routes.clear()
+            self._routes_at = now
 
     def step(self, manager: ElevatorManager, now: float) -> None:
+        self._fresh(now)
         self.demand = _observe_calls(self.demand, self._seen, manager, now, self.half_life, self.prior)
         self.parker.step(manager, self.demand, now)
         if now >= self._next_check:
@@ -383,11 +404,27 @@ class LookaheadDispatcher:
             cost += self.near_full_penalty
         return cost
 
+    def _least_cost(self, car: Elevator, call: HallCall, now: float) -> float:
+        """A cost this car can't beat for the call: as if it went straight there at top speed
+        and opened its doors (cost() only adds to that). Lets the search skip hopeless cars."""
+        eta = abs(call.floor - car.position) / car.speed + car.door_time
+        cost = eta
+        late = (now - call.pressed_at) + eta - self.tail_after
+        if late > 0:
+            cost += self.tail_weight * late * late
+        if car.capacity - car.load <= 1:
+            cost += self.near_full_penalty
+        return cost
+
     def estimate(self, car: Elevator, call: HallCall) -> tuple[float, float]:
         """(seconds until the car opens at the caller's floor, extra seconds of delay the stop
         adds for everyone else the car is carrying or picking up, weighted by how many)."""
         others = [k for k in car.hall_stops if k != call.key]
-        before = {stop.key: t for stop, t in _route(car, others, None)}
+        key = (car.id, car.position, car.velocity, car.direction, car.state, car.state_timer,
+               car.load, frozenset(car.car_calls), frozenset(others))
+        before = self._routes.get(key)
+        if before is None:
+            before = self._routes[key] = {stop.key: t for stop, t in _route(car, others, None)}
         eta, delay = math.inf, 0.0
         for stop, t in _route(car, others, call):
             if stop.is_call:
@@ -409,6 +446,8 @@ class LookaheadDispatcher:
             for car in manager.elevators:
                 if car is current or not car.serves(call.floor) or car.is_full:
                     continue
+                if self._least_cost(car, call, now) - 1e-9 >= best_cost:
+                    continue                    # can't be cheaper enough to take the call
                 c = self.cost(car, call, now)
                 if c < best_cost:
                     best, best_cost = car, c
@@ -464,7 +503,7 @@ def _route(car: Elevator, hall_stops: Iterable[tuple[int, Direction]], call: Hal
     riders = car.load / len(car_calls) if car_calls else 0.0
 
     def ahead(f: float, direction: Direction, origin: float) -> bool:
-        return (f - origin) * direction.value > -1e-9
+        return (f - origin) * direction.sign > -1e-9
 
     order: list[tuple[int, list[_Stop]]] = []
 
@@ -505,7 +544,7 @@ def _route(car: Elevator, hall_stops: Iterable[tuple[int, Direction]], call: Hal
                 floors.add(f)
         # In the first sweep, the car also runs on to turn around at the farthest pickup
         # going the other way, if that is beyond everything else.
-        for f in sorted(floors, key=lambda x: x * direction.value):
+        for f in sorted(floors, key=lambda x: x * direction.sign):
             got = stops_at(f, direction, use_calls and f in remaining_calls)
             remaining_calls.discard(f)
             remaining_picks.discard((f, direction))
@@ -513,8 +552,8 @@ def _route(car: Elevator, hall_stops: Iterable[tuple[int, Direction]], call: Hal
         if direction is d and start is not None:
             turn = [f for f, hd in remaining_picks if hd is not d and reachable(f)]
             if turn:
-                far = max(turn, key=lambda x: x * d.value)
-                if not order or (far - order[-1][0]) * d.value > 0:
+                far = max(turn, key=lambda x: x * d.sign)
+                if not order or (far - order[-1][0]) * d.sign > 0:
                     visit(far, [])
         if not remaining_calls and not remaining_picks:
             break

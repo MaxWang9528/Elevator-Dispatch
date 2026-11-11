@@ -84,10 +84,13 @@ that serves the fewest floors (an express bank before a local one that also stop
 **Changing cars.** When no one group serves both floors, people change cars, as at a sky lobby:
 the simulator finds the route with the fewest changes (at most three), then the shortest, at
 floors two groups share (never at a floor with no stops). At each change they get out, walk 15
-seconds to the next group and press its button. Each ride counts as its own trip in the
-passenger figures (so the people count is rides, not journeys); the trips file links a journey's
-rides with its `journey` and `leg` columns, and the Metrics tab adds the wait for the next car and
-the whole journey from the first button press to the final arrival. Commutes, lunch, outings to
+seconds to the next group and press its button. The passenger figures count the whole journey
+once: someone going 1 → 64 → 100 is one person whose wait is both waits added together, whose
+ride is both rides, and whose trip runs from the first button press to the final arrival (the
+walk included). The car figures count each ride, since each is a drop-off. The trips file has a
+row per ride, linked by its `journey`, `leg` and `journey_to` columns, and the Metrics tab adds
+the number of changes, the wait for the next car alone, and the whole trip of journeys that
+changed. Commutes, lunch, outings to
 special floors and visitors change cars when they need to; visits to another resident's (or
 office) floor stay within floors one ride away, as neighbors and colleagues mostly are. Settings
 won't save unless every floor is served and every residential floor can reach a Lobby or Parking /
@@ -243,11 +246,18 @@ are blank. Trips files carry the run's algorithm, seed, warm-up, long-wait thres
 interval and length on every row so they can be read back on their own (older files still
 import, with those worked out from the trips). Recent imports are remembered in the browser.
 
-**Sample data.** The Import tab has a button for each algorithm under Sample data. Each opens
-that algorithm's whole day (0:00 to 23:59) averaged over 10 runs (seeds 1 to 10, the same
-residents for all three) in a new browser tab, which links to the other two. They are fixed
-files in `web/samples/` (`lookahead.json`, `nearest.json`, `scan.json`); one opens directly at
-`/?sample=scan#import`.
+**Sample data.** The Import tab has a button for each saved run under Sample data. Each opens in a
+new browser tab, which links to the other algorithms for the same building and to the other
+buildings. They are fixed files in `web/samples/`; one opens directly at `/?sample=scan#import`.
+
+| Building | Runs | Files |
+|---|---|---|
+| Marquee at Block 37 | whole day (0:00 to 23:59), each algorithm averaged over 10 runs (seeds 1 to 10, the same residents for all three) | `lookahead.json`, `nearest.json`, `scan.json` |
+| Office tower, 50 floors | workday (6:30 to 20:00), Lookahead and Nearest car each averaged over 10 runs on the same 10 random seeds | `office-lookahead.json`, `office-nearest.json` |
+| One World Trade Center | workday (6:30 to 20:00), one run each of Lookahead and Nearest car (on different seeds) | `wtc-lookahead.json`, `wtc-nearest.json` |
+
+An average is each figure's mean across the runs, element by element for charts and
+percentiles; the report's `averaged` section lists the seeds and run files.
 
 **What is measured.** People who appear before the warm-up period (Settings, default 5 minutes)
 are left out, and car, queue and hall-call figures only cover time after it, so the start from
@@ -255,17 +265,17 @@ an empty building with every car parked at the lobby doesn't skew a comparison.
 
 | Metric | Meaning |
 |---|---|
-| Wait | Pressing the hall button to boarding. **People still waiting count with their wait so far**, so an algorithm can't look good by leaving people on a floor. |
-| Ride | Boarding to arrival. |
-| Whole trip | Pressing the button to arrival (wait + ride), for people who have arrived. |
+| Wait | Pressing the hall button to boarding. **People still waiting count with their wait so far**, so an algorithm can't look good by leaving people on a floor. For someone who changes cars, all their waits added together. |
+| Ride | Boarding to arrival (all the rides, for someone who changes cars). |
+| Whole trip | Pressing the button to arrival (wait + ride, plus any walk between cars), for people who have arrived. |
 | Average, median, 90th, 95th, 99th, longest | Reported for wait, ride and whole trip. The tail (95th and up) is where algorithms differ most. |
 | Whole trip by percentile | A chart under the passengers table: the whole-trip time at every percentile from 0 (fastest) to 100 (slowest). In the report as `passengers.trip_percentiles` (101 values). |
 | Waits over 60 s | Share of people whose wait passed the long-wait threshold (Settings). |
 | Left behind by a full car | People who were queued for a car's direction when it closed its doors full, and how many times that happened. |
-| Other stops during a ride | Times a rider's car stopped at a floor that wasn't theirs. |
-| Straight shots | Share of delivered riders whose car went straight to their floor without stopping anywhere else. Also shown for up and down trips. |
+| Other stops on the way | Times a person's car stopped at a floor that wasn't theirs (or the floor where they change cars). |
+| Straight shots | Share of delivered people whose car (or cars) went straight to their floor without stopping anywhere else. Also shown for up and down trips. |
 | By direction | People, average and 95th percentile wait, average trip, and straight shots for up and down trips. |
-| Rides after changing cars | Rides that start where the person changed cars, and their wait. Only when someone changed cars. |
+| Changes of car | How many times people changed cars, and the wait for the next car alone (already added into their wait above). Only when someone changed cars. |
 | Whole journey when changing cars | First button press to final arrival for journeys that changed cars. |
 | Hall call response | A hall button lighting to a car opening its doors there. This is what a real controller can measure. Also: buttons lit now and the oldest one. |
 | Arrivals and delivered per hour | If delivered stays below arrivals, the cars aren't keeping up. |

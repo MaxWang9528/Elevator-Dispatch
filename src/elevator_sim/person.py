@@ -59,6 +59,8 @@ class Person:
     leg: int = 1
     onward: tuple[int, ...] = ()
     journey_start: float | None = None
+    prior_wait: float = 0.0        # time spent waiting for the journey's earlier cars
+    prior_ride: float = 0.0        # and riding them
 
     def __post_init__(self) -> None:
         if self.origin_floor == self.requested_floor:

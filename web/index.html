@@ -236,11 +236,28 @@
       <p class="import-msg" id="importMsg" role="status" aria-live="polite"></p>
       <div class="import-samples">
         <h2>Sample data</h2>
-        <p>Each algorithm over a whole day, 0:00 to 23:59, averaged over 10 runs with the same residents. Each one opens in its own browser tab, so you can switch between them.</p>
-        <div class="inline sample-buttons">
-          <a class="btn" href="?sample=lookahead#import" target="_blank" rel="noopener">Lookahead</a>
-          <a class="btn" href="?sample=nearest#import" target="_blank" rel="noopener">Nearest car</a>
-          <a class="btn" href="?sample=scan#import" target="_blank" rel="noopener">SCAN</a>
+        <p>Saved runs of the built-in buildings, one per algorithm. Each one opens in its own browser tab, so you can switch between them.</p>
+        <div class="sample-group">
+          <h3>Marquee at Block 37 <span>whole day, 0:00 to 23:59, average of 10 runs (the same residents for each algorithm)</span></h3>
+          <div class="inline sample-buttons">
+            <a class="btn" href="?sample=lookahead#import" target="_blank" rel="noopener">Lookahead</a>
+            <a class="btn" href="?sample=nearest#import" target="_blank" rel="noopener">Nearest car</a>
+            <a class="btn" href="?sample=scan#import" target="_blank" rel="noopener">SCAN</a>
+          </div>
+        </div>
+        <div class="sample-group">
+          <h3>Office tower, 50 floors <span>workday, 6:30 to 20:00, average of 10 runs (the same random seeds for each algorithm)</span></h3>
+          <div class="inline sample-buttons">
+            <a class="btn" href="?sample=office-lookahead#import" target="_blank" rel="noopener">Lookahead</a>
+            <a class="btn" href="?sample=office-nearest#import" target="_blank" rel="noopener">Nearest car</a>
+          </div>
+        </div>
+        <div class="sample-group">
+          <h3>One World Trade Center <span>workday, 6:30 to 20:00, one run each (different seeds)</span></h3>
+          <div class="inline sample-buttons">
+            <a class="btn" href="?sample=wtc-lookahead#import" target="_blank" rel="noopener">Lookahead</a>
+            <a class="btn" href="?sample=wtc-nearest#import" target="_blank" rel="noopener">Nearest car</a>
+          </div>
         </div>
       </div>
       <div class="import-recent" id="importRecent" hidden>

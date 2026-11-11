@@ -85,6 +85,7 @@ class Simulation:
         self.day_start = day_start
         self.people: dict[int, Person] = {}
         self._next_person_id = 0
+        self._waiting_floors: set[int] = set()   # floors with someone in a queue (a speed-up)
         for car in elevators:
             if not 0 <= car.position <= building.top:
                 raise ValueError(f"car {car.id} starts outside the building at {car.position}")
@@ -241,15 +242,18 @@ class Simulation:
 
     def _add_person(self, origin: int, destination: int, *, onward: tuple[int, ...] = (),
                     resident_id: int | None = None, purpose: str = "", journey: int = -1,
-                    leg: int = 1, journey_start: float | None = None) -> Person:
+                    leg: int = 1, journey_start: float | None = None,
+                    prior_wait: float = 0.0, prior_ride: float = 0.0) -> Person:
         """A person starts waiting at `origin` for a ride to `destination` (one leg)."""
         group = self._pick_group(origin, destination)
         person = Person(self._next_person_id, origin, destination, self.time, AtFloor(origin),
                         resident_id=resident_id, purpose=purpose, group=group, journey=journey,
-                        leg=leg, onward=onward, journey_start=journey_start)
+                        leg=leg, onward=onward, journey_start=journey_start,
+                        prior_wait=prior_wait, prior_ride=prior_ride)
         self._next_person_id += 1
         self.people[person.id] = person
         self.building[origin].queue(person.direction).append(person)
+        self._waiting_floors.add(origin)
         self.metrics.on_spawn(person)
         self._press_if_needed(origin, person.direction)
         return person
@@ -261,7 +265,10 @@ class Simulation:
         if car.state is not CarState.DOORS_OPEN or car.is_full:
             raise RuntimeError(f"{person} can't board car {car.id} ({car.state}, load {car.load})")
 
-        self.building[car.floor].queue(person.direction).remove(person)
+        floor = self.building[car.floor]
+        floor.queue(person.direction).remove(person)
+        if not floor.up_queue and not floor.down_queue:
+            self._waiting_floors.discard(floor.index)
         car.passengers.append(person)
         person.location = InCar(car.id)
         person.board_time = self.time
@@ -299,14 +306,19 @@ class Simulation:
             prev = heapq.heappop(self._legs_due)[2]
             self._add_person(prev.requested_floor, prev.onward[0], onward=prev.onward[1:],
                              resident_id=prev.resident_id, purpose=prev.purpose, journey=prev.journey,
-                             leg=prev.leg + 1, journey_start=prev.journey_start)
+                             leg=prev.leg + 1, journey_start=prev.journey_start,
+                             prior_wait=prev.prior_wait + prev.wait_time,
+                             prior_ride=prev.prior_ride + prev.ride_time)
         for source in self.traffic:
             source.step(self, self.dt)
-        for floor in self.building.floors:
-            for d in (Direction.UP, Direction.DOWN):
-                self._press_if_needed(floor.index, d)
+        # Only floors with people waiting can need a button pressed, in the same order as
+        # checking every floor from the bottom (up before down) would.
+        for index in sorted(self._waiting_floors):
+            self._press_if_needed(index, Direction.UP)
+            self._press_if_needed(index, Direction.DOWN)
         for manager in self.managers:
             manager.step(self.time)
+        recording = self.metrics._recording(self.time - self.dt)
 
         for car in self.elevators:
             prev_state, prev_position = car.state, car.position
@@ -318,7 +330,7 @@ class Simulation:
                     self._answer_call(car.floor, car.direction, car.group)
             if car.state is CarState.DOORS_OPEN:
                 self._service_open_car(car)
-            self.metrics.observe_car(car, prev_state, prev_position, self.time, self.dt)
+            self.metrics.observe_car(car, prev_state, prev_position, self.time, self.dt, recording)
         self.metrics.on_tick(self.time, self.dt)
 
     def run(self, seconds: float) -> None:
@@ -462,13 +474,14 @@ class Simulation:
     TRIP_COLUMNS = ("person", "from_floor", "to_floor", "direction", "status", "measured",
                     "spawn_time", "board_time", "arrive_time", "wait", "ride", "trip",
                     "car", "stops_en_route", "left_behind", "resident", "purpose", "spawn_clock",
-                    "journey", "leg",
+                    "journey", "leg", "journey_to",
                     "dispatcher", "seed", "warmup", "long_wait", "chart_interval", "run_time")
 
     def trip_rows(self) -> Iterator[tuple[Any, ...]]:
         """One row per person (columns: TRIP_COLUMNS), for analysis outside the simulator.
         A journey that changes cars has a row per ride, linked by `journey` (its first ride's
-        person) and numbered by `leg`.
+        person) and numbered by `leg`; `journey_to` is where the whole journey ends. Each row's
+        times are for that ride alone (the report adds a journey's rides together).
         `wait` is blank until the person boards; times are simulated seconds since the run
         began, and `spawn_clock` is the time of day they pressed the button (timed runs only).
         The last six columns are the same on every row: the run's algorithm, seed and metric
@@ -489,7 +502,7 @@ class Simulation:
                 "" if p.car_id is None else p.car_id, p.stops_en_route, p.left_behind,
                 "" if p.resident_id is None else p.resident_id, p.purpose,
                 "" if self.day_start is None else format_time(self.day_start + p.spawn_time, with_seconds=True),
-                p.journey, p.leg,
+                p.journey, p.leg, self.building[p.final_floor].label,
                 *run,
             )
 

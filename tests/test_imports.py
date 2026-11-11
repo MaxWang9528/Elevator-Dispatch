@@ -143,21 +143,27 @@ class TestImportEndpoint(unittest.TestCase):
             page = res.read().decode()
         for needle in ('id="tab-import"', 'id="view-import"', 'id="metricsLayout"', 'src="imports.js"',
                        'href="?sample=lookahead#import"', 'href="?sample=nearest#import"',
-                       'href="?sample=scan#import"'):
+                       'href="?sample=scan#import"', 'href="?sample=office-lookahead#import"',
+                       'href="?sample=office-nearest#import"', 'href="?sample=wtc-lookahead#import"',
+                       'href="?sample=wtc-nearest#import"'):
             self.assertIn(needle, page)
 
     def test_sample_data(self):
         # Every sample the Import tab offers is served, is a valid report, and is the right algorithm.
         script = (Path(__file__).resolve().parents[1] / "web" / "imports.js").read_text()
-        for algorithm in ("lookahead", "nearest", "scan"):
-            with self.subTest(algorithm=algorithm):
-                self.assertIn(f'id: "{algorithm}"', script)
-                with urllib.request.urlopen(f"{self.base}/samples/{algorithm}.json") as res:
+        samples = [(a, a, 10, 38) for a in ("lookahead", "nearest", "scan")]
+        samples += [(f"office-{a}", a, 10, 50) for a in ("lookahead", "nearest")]
+        samples += [(f"wtc-{a}", a, None, 104) for a in ("lookahead", "nearest")]     # single runs
+        for sample, algorithm, runs, floors in samples:
+            with self.subTest(sample=sample):
+                self.assertIn(f'id: "{sample}"', script)
+                with urllib.request.urlopen(f"{self.base}/samples/{sample}.json") as res:
                     self.assertEqual(res.headers.get_content_type(), "application/json")
                     report = json.load(res)
-                report = report_from_file(f"{algorithm}.json", json.dumps(report).encode())
+                report = report_from_file(f"{sample}.json", json.dumps(report).encode())
                 self.assertEqual(report["run"]["dispatcher"], algorithm)
-                self.assertEqual(report["averaged"]["runs"], 10)
+                self.assertEqual(report["run"]["floors"], floors)
+                self.assertEqual(report.get("averaged", {}).get("runs"), runs)
                 self.assertEqual(len(report["passengers"]["trip_percentiles"]), 101)
         with urllib.request.urlopen(f"{self.base}/?sample=scan") as res:      # the page a sample tab opens
             self.assertIn('id="view-import"', res.read().decode())

@@ -5,12 +5,17 @@
 
 const IMPORT_STORE = "elevatorImports.v2";
 const IMPORT_KEEP = 8;      // most recent imports remembered
-// Sample data (web/samples): each algorithm's whole-day results, averaged over 10 runs. The
-// Sample data buttons open one in a new browser tab, as /?sample=<id>#import.
+// Sample data (web/samples): saved runs of each building, a file per algorithm (see index.html
+// for what each building's runs cover). The Sample data buttons open one in a new browser tab,
+// as /?sample=<id>#import.
 const SAMPLES = [
-  { id: "lookahead", title: "Sample: Lookahead" },
-  { id: "nearest", title: "Sample: Nearest car" },
-  { id: "scan", title: "Sample: SCAN" },
+  { id: "lookahead", building: "Marquee", title: "Sample: Marquee, Lookahead" },
+  { id: "nearest", building: "Marquee", title: "Sample: Marquee, Nearest car" },
+  { id: "scan", building: "Marquee", title: "Sample: Marquee, SCAN" },
+  { id: "office-lookahead", building: "Office tower", title: "Sample: Office tower, Lookahead" },
+  { id: "office-nearest", building: "Office tower", title: "Sample: Office tower, Nearest car" },
+  { id: "wtc-lookahead", building: "One World Trade Center", title: "Sample: One World Trade Center, Lookahead" },
+  { id: "wtc-nearest", building: "One World Trade Center", title: "Sample: One World Trade Center, Nearest car" },
 ];
 
 class ImportTab {
@@ -73,13 +78,21 @@ class ImportTab {
     }
   }
 
-  /** Under a sample's title: links to the other samples, each opening in its own tab. */
+  /** Under a sample's title: links to the other samples, each opening in its own tab. The same
+   * building's other algorithms come first, to compare them. */
   showSampleNav(sample) {
     document.getElementById("sampleNav")?.remove();
-    const links = SAMPLES.filter((s) => s !== sample).map((s) =>
-      el("a", { href: this.sampleUrl(s.id), target: "_blank", rel: "noopener" }, s.title));
-    this.view.$("mNotice").before(el("div", { class: "notice notice-info sample-nav", id: "sampleNav" },
-      "Other samples:", el("span", { class: "sample-links" }, ...links)));
+    const others = SAMPLES.filter((s) => s !== sample);
+    const same = others.filter((s) => s.building === sample.building);
+    const link = (s, text) => el("a", { href: this.sampleUrl(s.id), target: "_blank", rel: "noopener" }, text);
+    const rows = [];
+    if (same.length) {
+      rows.push(el("div", {}, `${sample.building}, other algorithms:`,
+        el("span", { class: "sample-links" }, ...same.map((s) => link(s, s.title.split(", ").pop())))));
+    }
+    rows.push(el("div", {}, "Other buildings:", el("span", { class: "sample-links" },
+      ...others.filter((s) => !same.includes(s)).map((s) => link(s, s.title.replace("Sample: ", ""))))));
+    this.view.$("mNotice").before(el("div", { class: "notice notice-info sample-nav", id: "sampleNav" }, ...rows));
   }
 
   async importFile(file) {

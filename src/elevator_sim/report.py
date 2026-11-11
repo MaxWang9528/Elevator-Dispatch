@@ -75,8 +75,8 @@ def format_report(report: dict[str, Any], timeline: bool = False) -> str:
 
     if p.get("changes"):
         cw, jw = p["change_wait"], p["journey_with_change"]
-        lines_changes = [f"  Rides after changing cars: {p['changes']:,}, waiting {_num(cw['mean'])} s on average "
-                         f"(95th {_num(cw['p95'])} s)",
+        lines_changes = [f"  Changes of car: {p['changes']:,}, waiting {_num(cw['mean'])} s on average "
+                         f"for the next car (95th {_num(cw['p95'])} s)",
                          f"  Whole journey when changing cars: {_num(jw['mean'])} s on average "
                          f"(95th {_num(jw['p95'])} s), {p['journeys_with_change']:,} journeys"]
     else:
@@ -88,9 +88,11 @@ def format_report(report: dict[str, Any], timeline: bool = False) -> str:
                      + f"{d['n']:>9,}")
     lines += [
         f"  Waits over {report['long_wait']:g} s: {_pct(p['long_wait_share'])} ({p['long_waits']:,} people)",
-        f"  Still waiting: {p['waiting']:,}    Riding: {p['riding']:,}    Delivered: {p['delivered']:,}",
+        f"  Still waiting: {p['waiting']:,}    Riding: {p['riding']:,}    "
+        + (f"Changing cars: {p['changing']:,}    " if p.get("changing") else "")
+        + f"Delivered: {p['delivered']:,}",
         f"  Left behind by a full car: {p['left_behind_people']:,} people, {p['left_behind_events']:,} times",
-        f"  Stops during a ride, other than their own: {_num(p['stops_per_ride'], digits=2)}",
+        f"  Stops on the way, other than their own: {_num(p['stops_per_ride'], digits=2)}",
         f"  Straight shots (no other stops on the way): {_pct(p['straight_shot_share'])} "
         f"({p['straight_shots']:,} of {p['delivered']:,} delivered)",
         *lines_changes,

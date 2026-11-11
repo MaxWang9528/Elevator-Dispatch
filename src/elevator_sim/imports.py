@@ -86,6 +86,7 @@ def report_from_trips(name: str, text: str) -> dict[str, Any]:
         run_row = row
     if not people:
         raise ImportFileError(f"{name} has no trips in it.")
+    _link_journeys(people)
 
     # Files from this version carry the run's settings on every row; older ones don't, so
     # those are worked out from the trips (the warm-up, the end) or take the defaults.
@@ -166,8 +167,20 @@ def _person(name: str, line: int, index: int, row: dict[str, str]) -> Person:
         raise ImportFileError(f"{name}, line {line}: from_floor and to_floor are the same.")
     board, arrive = num("board_time"), num("arrive_time")
     car = (row.get("car") or "").strip()
+    # Rides that are one journey (changing cars) share its first ride's person number. Files
+    # from before journeys existed have no such columns: every ride is its own journey.
+    pid = num("person")
+    journey = num("journey") if pid is not None else None
+    leg = num("leg")
+    final = (row.get("journey_to") or "").strip()
+    onward: tuple[int, ...] = ()
+    if final and final != (row.get("to_floor") or "").strip():
+        onward = (floor("journey_to"),)
     person = Person(
-        id=index, origin_floor=origin, requested_floor=dest, spawn_time=spawn,
+        id=int(pid) if pid is not None else index,
+        journey=int(journey) if journey is not None else -1,
+        leg=int(leg) if leg else 1,
+        onward=onward, origin_floor=origin, requested_floor=dest, spawn_time=spawn,
         location=Arrived(dest) if arrive is not None else InCar(int(car or 0)) if board is not None else AtFloor(origin),
         board_time=board, arrive_time=arrive,
         car_id=int(car) if car else None,
@@ -177,6 +190,25 @@ def _person(name: str, line: int, index: int, row: dict[str, str]) -> Person:
         purpose=(row.get("purpose") or "").strip(),
     )
     return person
+
+
+def _link_journeys(people: list[Person]) -> None:
+    """Give each later ride of a journey what the simulation gave it: when the journey began,
+    and the waiting and riding it had done before this car."""
+    by_journey: dict[int, list[Person]] = {}
+    for p in people:
+        by_journey.setdefault(p.journey, []).append(p)
+    for legs in by_journey.values():
+        if len(legs) < 2:
+            continue
+        legs.sort(key=lambda p: p.leg)
+        waited = rode = 0.0
+        for p in legs:
+            p.journey_start, p.prior_wait, p.prior_ride = legs[0].spawn_time, waited, rode
+            if p.wait_time is not None:
+                waited += p.wait_time
+            if p.ride_time is not None:
+                rode += p.ride_time
 
 
 def _warmup(people: list[Person], flags: list[str]) -> float:

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 
 
-class Direction(Enum):
+class Direction(IntEnum):
+    """An int enum only for speed: its members hash in C, which matters because (floor,
+    direction) pairs fill the cars' stop sets and the dispatchers' lookups. Compare members
+    with `is`, as everywhere else; don't use them as numbers (use `sign`)."""
+
     UP = 1
     DOWN = -1
     IDLE = 0
-
-    @property
-    def opposite(self) -> Direction:
-        return {Direction.UP: Direction.DOWN, Direction.DOWN: Direction.UP}.get(self, Direction.IDLE)
 
     @staticmethod
     def toward(from_pos: float, to_pos: float) -> Direction:
@@ -21,6 +21,14 @@ class Direction(Enum):
         if to_pos < from_pos:
             return Direction.DOWN
         return Direction.IDLE
+
+
+# Plain attributes, set once, because hot loops read them constantly and Enum properties are
+# Python-level calls: `d.sign` is 1, -1 or 0, and `d.opposite` is the reverse direction.
+for _d in Direction:
+    _d.sign = int(_d)
+Direction.UP.opposite, Direction.DOWN.opposite, Direction.IDLE.opposite = (
+    Direction.DOWN, Direction.UP, Direction.IDLE)
 
 
 class CarState(Enum):

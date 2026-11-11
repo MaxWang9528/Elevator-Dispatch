@@ -105,7 +105,7 @@ class Elevator:
         )
 
     def is_ahead(self, floor: float, direction: Direction) -> bool:
-        return (floor - self.position) * direction.value > EPS
+        return (floor - self.position) * direction.sign > EPS
 
     def stops_ahead(self, direction: Direction) -> list[int]:
         return [f for f in self.all_stop_floors() if self.is_ahead(f, direction)]
@@ -122,7 +122,7 @@ class Elevator:
         A car moving at full speed can't stop at the very next floor: it shoots past and
         serves that stop later. This is why moving cars skip calls that appear just ahead.
         """
-        offset = (floor - self.position) * direction.value
+        offset = (floor - self.position) * direction.sign
         return offset > EPS and offset >= self.braking_distance - 1e-6
 
     def travel_time(self, distance: float) -> float:
@@ -139,29 +139,47 @@ class Elevator:
 
     # --- the basic algorithm -----------------------------------------------------------
     def next_target(self) -> int | None:
-        """Floor to head for next, given the current direction. None = nothing ahead."""
-        stops = self.all_stop_floors()
-        if not stops:
-            return self._sweep_target() if self.sweep_to is not None else self._park_target()
-        if self.direction is Direction.IDLE:
-            return min(stops, key=lambda f: (abs(f - self.position), f))
+        """Floor to head for next, given the current direction. None = nothing ahead.
 
+        Runs for every moving car on every tick, so it is written as plain loops; the order
+        it looks at stops in (car calls, then pickups) decides ties, as min()/max() would."""
+        car_calls, hall_stops = self.car_calls, self.hall_stops
+        if not car_calls and not hall_stops:
+            return self._sweep_target() if self.sweep_to is not None else self._park_target()
+        pos = self.position
         d = self.direction
-        dist = lambda f: abs(f - self.position)  # noqa: E731
-        reachable = lambda f: self.can_stop_at(f, d)  # noqa: E731
+        if d is Direction.IDLE:
+            return min(car_calls | {f for f, _ in hall_stops}, key=lambda f: (abs(f - pos), f))
+
+        # Can it still brake for a floor ahead? (can_stop_at, inlined)
+        sign = d.sign
+        brake = self.velocity ** 2 / (2 * self.acceleration) - 1e-6
         # 1. Drop-offs and same-direction pickups ahead that we can still brake for: nearest first.
-        same = [f for f in self.car_calls if reachable(f)]
-        same += [f for f, hd in self.hall_stops if hd is d and reachable(f)]
-        if same:
-            return min(same, key=dist)
+        best, best_dist = None, math.inf
+        for f in car_calls:
+            off = (f - pos) * sign
+            if off > EPS and off >= brake and off < best_dist:
+                best, best_dist = f, off
+        for f, hd in hall_stops:
+            if hd is d:
+                off = (f - pos) * sign
+                if off > EPS and off >= brake and off < best_dist:
+                    best, best_dist = f, off
+        if best is not None:
+            return best
         # 2. Sweeping to an end of the building: keep going there before turning.
-        if self.sweep_to is not None and reachable(self.sweep_to):
-            return self.sweep_to
+        if self.sweep_to is not None:
+            off = (self.sweep_to - pos) * sign
+            if off > EPS and off >= brake:
+                return self.sweep_to
         # 3. Only opposite-direction pickups ahead: go to the farthest one and turn around there.
-        opposite = [f for f, hd in self.hall_stops if hd is not d and reachable(f)]
-        if opposite:
-            return max(opposite, key=dist)
-        return None
+        best, best_dist = None, -math.inf
+        for f, hd in hall_stops:
+            if hd is not d:
+                off = (f - pos) * sign
+                if off > EPS and off >= brake and off > best_dist:
+                    best, best_dist = f, off
+        return best
 
     def _sweep_target(self) -> int | None:
         s = self.sweep_to
@@ -278,12 +296,12 @@ class Elevator:
         if target is None:
             # Our stops were taken by another car (or are too close to brake for):
             # stop at the nearest floor we can still brake for, then idle.
-            reach = self.position + d.value * self.braking_distance
+            reach = self.position + d.sign * self.braking_distance
             target = math.ceil(reach - 1e-6) if d is Direction.UP else math.floor(reach + 1e-6)
             if self.max_floor is not None:
                 target = min(max(target, 0), self.max_floor)
 
-        remaining = (target - self.position) * d.value   # floors left, >= braking distance
+        remaining = (target - self.position) * d.sign   # floors left, >= braking distance
         u = abs(self.velocity)
         a = self.acceleration
         # Fastest speed w at the end of this tick that still lets us stop at the target:
@@ -300,8 +318,8 @@ class Elevator:
             self._arrive(target)
         else:
             self.odometer += moved
-            self.position += d.value * moved
-            self.velocity = d.value * w
+            self.position += d.sign * moved
+            self.velocity = d.sign * w
 
     def _arrive(self, floor: int) -> None:
         self.velocity = 0.0
