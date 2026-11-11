@@ -5,6 +5,8 @@ https://elevator-dispatch.onrender.com/~~
 
 Download the desktop app for Windows or macOS (see [Desktop app](#desktop-app)).
 
+How the default dispatching algorithm works, in detail: [The lookahead algorithm](#the-lookahead-algorithm).
+
 A multi-elevator apartment building simulation (Python, standard library only) with a live
 web visualization. Defaults approximate Marquee at Block 37 in Chicago: 38 floors served by
 6 elevators, ~1,000 residents, with special floors for the lobby (1), parking / Block 37 mall /
@@ -13,41 +15,6 @@ CTA Red and Blue lines (4), common areas (5) and the roof deck and gym (38).
 Settings are edited on the Settings tab and saved to `data/settings.json` (in Docker, the
 `settings` volume), so they persist across restarts. To add a setting, add a field to
 `Settings` in `src/elevator_sim/settings.py`; the Settings tab is generated from it.
-
-## Presets
-
-A preset is a whole set of settings under a name: the building, its elevators, its residents,
-rush hours and everything else on the Settings tab. The Presets section at the top of that tab
-lists them, marks the one in use, and loads one with a click (which saves it as the settings and
-restarts the simulation). **Save preset** stores what's on the tab under a name, including edits
-not yet saved; saving under an existing name replaces that preset. Saved presets go in
-`presets.json` next to the settings file (`data/presets.json`, or the `settings` volume in Docker).
-
-Five come built in and can't be changed or deleted: **Marquee at Block 37** (the defaults),
-**Mid-rise, 12 floors** (2 slower cars, 300 residents), **Tower, 60 floors** (2,000 residents,
-a low-rise bank to floor 30 and a high-rise bank that runs express from the garage and shops to
-the sky lounge on 30) and **Office tower, 50 floors** (4,000 people at work, three zones of 4
-cars from the lobby and food court, and a lunch peak) and **One World Trade Center**.
-
-**One World Trade Center** follows public sources where they exist: floor numbers to 104, the
-lobby and base on 1-19, offices on 20-90, the sky lobby on 64, the observatory on 100-102, and
-5 Sky Pods from the lobby to 102 (calibrated to the published ride of about 47 seconds). The
-rest is estimated, because it isn't published: the banks (four of 8 cars from the lobby for 20-63,
-8 shuttles from the lobby to 64, and two local banks of 6 cars from 64 for 65-90; 57 cars in all,
-against the building's 71-73 including service cars), their speeds, and 13,000 people at work
-(about one per 200 sq ft of its 2.6 million sq ft of offices). As in the real building, people
-working above 64 ride a shuttle to the sky lobby and change there to a local car, both ways.
-Destination dispatch isn't modeled. About 4,400 observatory visitors a day (15 million from the 2015 opening to November
-2024) ride the Sky Pods up to 102 and back down from 100, between 9:00 and 21:00 with last entry
-at 20:15, busiest in the afternoon, staying 75 minutes on average.
-
-The command-line tools take `--preset NAME` (case doesn't matter) to use a preset's settings
-instead of the saved ones:
-
-```sh
-PYTHONPATH=src python3 -m elevator_sim.report --preset "Tower, 60 floors" --rush morning
-PYTHONPATH=src python3 -m elevator_sim.compare --preset "Mid-rise, 12 floors" --seeds 1-10
-```
 
 ## Desktop app
 
@@ -100,6 +67,41 @@ PYTHONPATH=src python3 -m elevator_sim.server
 ```
 
 Then open http://localhost:8000.
+
+## Presets
+
+A preset is a whole set of settings under a name: the building, its elevators, its residents,
+rush hours and everything else on the Settings tab. The Presets section at the top of that tab
+lists them, marks the one in use, and loads one with a click (which saves it as the settings and
+restarts the simulation). **Save preset** stores what's on the tab under a name, including edits
+not yet saved; saving under an existing name replaces that preset. Saved presets go in
+`presets.json` next to the settings file (`data/presets.json`, or the `settings` volume in Docker).
+
+Five come built in and can't be changed or deleted: **Marquee at Block 37** (the defaults),
+**Mid-rise, 12 floors** (2 slower cars, 300 residents), **Tower, 60 floors** (2,000 residents,
+a low-rise bank to floor 30 and a high-rise bank that runs express from the garage and shops to
+the sky lounge on 30) and **Office tower, 50 floors** (4,000 people at work, three zones of 4
+cars from the lobby and food court, and a lunch peak) and **One World Trade Center**.
+
+**One World Trade Center** follows public sources where they exist: floor numbers to 104, the
+lobby and base on 1-19, offices on 20-90, the sky lobby on 64, the observatory on 100-102, and
+5 Sky Pods from the lobby to 102 (calibrated to the published ride of about 47 seconds). The
+rest is estimated, because it isn't published: the banks (four of 8 cars from the lobby for 20-63,
+8 shuttles from the lobby to 64, and two local banks of 6 cars from 64 for 65-90; 57 cars in all,
+against the building's 71-73 including service cars), their speeds, and 13,000 people at work
+(about one per 200 sq ft of its 2.6 million sq ft of offices). As in the real building, people
+working above 64 ride a shuttle to the sky lobby and change there to a local car, both ways.
+Destination dispatch isn't modeled. About 4,400 observatory visitors a day (15 million from the 2015 opening to November
+2024) ride the Sky Pods up to 102 and back down from 100, between 9:00 and 21:00 with last entry
+at 20:15, busiest in the afternoon, staying 75 minutes on average.
+
+The command-line tools take `--preset NAME` (case doesn't matter) to use a preset's settings
+instead of the saved ones:
+
+```sh
+PYTHONPATH=src python3 -m elevator_sim.report --preset "Tower, 60 floors" --rush morning
+PYTHONPATH=src python3 -m elevator_sim.compare --preset "Mid-rise, 12 floors" --seeds 1-10
+```
 
 ## Floors with no stops
 
@@ -226,14 +228,7 @@ direction, load and stops. None of them sees where waiting people want to go.
 |---|---|
 | `nearest` | The baseline. The car that would reach the caller soonest, counting the stops it already has. Each call is assigned once, and idle cars wait wherever they stopped. Each car turns around after its last stop in a direction (the SCAN variant known as LOOK). |
 | `scan` | The classic elevator algorithm. Each car sweeps all the way to one end of the building and back, stopping for every call in its direction as it passes, and turns around only at the ends, even with nobody aboard. A call goes to the car that will pass it soonest going its way; a car resting at an end sets off when it would reach a waiting call before any sweeping car. |
-| `lookahead` (default) | Looks ahead three ways. **Along each car's route:** it works out when the car would really reach the caller, stop by stop, and adds the delay the extra stop causes the car's riders and other pickups; a call that would leave someone waiting past 60 s gets extra weight, and a nearly full car is avoided. **To the next calls:** idle cars park where calls are expected (below). **To a better car:** every second, a call that its car isn't already braking for moves to another car if that one is at least 5 s cheaper. Ties go to the car that has traveled least. |
-
-**Parking** learns where calls come from: each hall call counts, fading by half every 10 minutes.
-A car that has been idle for 3 s is offered every floor, scored by the expected time for the
-nearest waiting car to reach the next call; it moves only if that improves by at least 6 s
-(checked again every 30 s while it stays idle). In practice idle cars spread through the upper
-floors in the morning and gather at floors 1 and 4 in the evening. Parking costs travel: expect
-10–25% more floors traveled per person.
+| `lookahead` (default) | Prices every car by when it would really reach the caller along its route, plus the delay the extra stop causes everyone it already carries or has promised to pick up, with extra weight on waits past 60 s. Every second, a call moves to another car if that one has become at least 5 s cheaper, and idle cars park where calls are expected. See [The lookahead algorithm](#the-lookahead-algorithm). |
 
 ### Comparing algorithms
 
@@ -362,3 +357,139 @@ packaging/        PyInstaller spec and entry point for the desktop app
 web/              index.html, style.css, renderer.js (canvas), metrics.js (tables + charts),
                   settings.js, app.js
 ```
+
+## The lookahead algorithm
+
+The default algorithm, `LookaheadDispatcher` in `src/elevator_sim/dispatchers.py`. Each elevator
+group has its own copy. Like the others, it only knows what a real group controller knows: which
+hall buttons are lit and since when, and each car's position, speed, direction, load, door state
+and the floor buttons pressed inside it. It can't see where waiting people want to go, or which
+rider is getting off where.
+
+It does three jobs: it **assigns** each new hall call to a car by a predicted cost, **reassigns**
+calls every second when another car has become clearly better, and **parks** idle cars where the
+next call is most likely.
+
+### Assigning a call: the cost
+
+When a hall button lights, every car in the group that stops at that floor and isn't full is
+priced, and the cheapest gets the call:
+
+```
+cost = ETA
+     + 0.5 × delay to everyone else
+     + 0.05 × (seconds past 60 that the caller's wait would reach)²
+     + 30 s if the car has room for at most one more person
+```
+
+Ties go to the car that has traveled least, to share the work.
+
+**ETA: the car's route.** Nearest car takes the straight-line distance to the caller. Lookahead
+works out the order the car will really visit its stops, and when. It follows the same rule as
+the cars (collective control):
+
+1. Onward in the current direction, stopping for drop-offs and for pickups going that way. A
+   moving car skips floors it can no longer brake for: at full speed it can't stop at the very
+   next floor.
+2. If a pickup going the other way is beyond everything else, the car runs on to it and turns there.
+3. Back the other way, for pickups going that way.
+4. The first direction again, for same-direction pickups that were behind the car.
+
+Along that route, travel between stops uses the cars' acceleration (a short hop never reaches top
+speed, so it costs `2·√(floors / acceleration)`). Each stop adds the doors opening, one person
+getting on or off (or the minimum time doors stay open), and the doors closing: about 6 s with the
+defaults. A car whose doors are moving or open finishes that first. The ETA is when the doors open
+at the caller's floor.
+
+**Delay to everyone else.** A new stop pushes back everyone the car has already promised to serve.
+The car's route is worked out with and without the new call, and every other stop is compared:
+
+- *Riders aboard:* the controller doesn't know who is getting off where, so the car's load is
+  spread evenly over the floor buttons lit inside it (6 riders and 3 buttons count 2 people each).
+- *Other pickups* already assigned to the car count 1 person each.
+
+The delay is the sum of people × seconds later, and counts at half weight.
+
+**Long waits.** `late = waited so far + ETA − 60`, and if it's above 0 the cost goes up by
+`0.05 × late²`. The penalty grows with the square of the lateness: 5 s at 10 s late, 20 s at 20 s,
+80 s at 40 s. This aims at the tail (95th and 99th percentile waits) more than the average: a call
+that has already waited a while becomes very expensive to leave with a slow car.
+
+**Nearly full cars** get 30 s added, since they may arrive full and leave the caller behind; the
+controller can't see how many people are waiting at a button.
+
+**An example**, with the Marquee defaults. Someone presses ↑ on floor 8.
+
+- Car A is at floor 6 going up, with 4 riders and buttons lit for 10 and 12. It's 2 floors away,
+  so its ETA is about 4 to 5 s, but stopping makes each of its 4 riders about 6 s later: 24 s of
+  delay, which counts 12. Cost about 17.
+- Car B is idle at floor 2, 6 floors away: `2·√(6 / 0.35)` ≈ 8.3 s plus 2 s for the doors, with
+  nobody to delay. Cost about 10.
+
+Nearest car would send A. Lookahead sends B: the caller waits about 5 s longer, and four riders
+aren't each held up 6 s. Had the caller already waited 70 s, the long-wait term would win it for A.
+
+A car that couldn't beat the best cost so far even going straight there at top speed is skipped
+without working out its route. That only saves time; the choice is the same.
+
+### Reassigning calls
+
+An assignment can go stale: the chosen car picks up more stops, or another car frees up. Every
+second, each lit call is priced again:
+
+- A call stays with its car if that car is already opening there, or braking to stop there.
+- Otherwise it moves to another car only if that car is **at least 5 s cheaper**. Without the
+  margin, a call could flip between two cars of nearly equal cost and neither would commit.
+
+The long-wait term makes this correct itself: as a call waits, its car's cost grows with the
+square of the lateness, and any car that can get there sooner wins it by more than the margin.
+
+### Parking idle cars
+
+**Where calls come from.** Each hall call adds 1 to its floor, and every floor's count halves every
+10 minutes, which gives the chance that the next call comes from each floor. 5% of it is spread
+evenly over all floors, so it's sensible before any calls and never rules a floor out. Because old
+calls fade, it follows the time of day.
+
+**Where to wait.** A car that has been idle for 3 s is offered every floor it serves, scored by
+
+```
+score(floor) = sum over every floor f of
+               chance the next call comes from f
+               × time for the nearest waiting car to reach f
+```
+
+where the nearest waiting car is either this car parked at that floor or the best of the other
+idle or parking cars. That's the expected time to answer the next call. Counting the other cars
+spreads them out: if one already covers the lobby, a second one does more good elsewhere. The car
+moves only if that improves by at least 6 s, and it's checked again every 30 s while it stays idle.
+
+In practice idle cars spread through the upper floors in the morning and gather at floors 1 and 4
+in the evening. Parking costs travel: expect 10–25% more floors traveled per person.
+
+### Defaults
+
+| Setting | Default | What it does |
+|---|---|---|
+| `delay_weight` | 0.5 | How much other people's delay counts, against the caller's ETA |
+| `tail_after` | 60 s | Wait at which the long-wait penalty starts |
+| `tail_weight` | 0.05 | How steep the long-wait penalty is |
+| `near_full_penalty` | 30 s | Keeps calls away from cars that may arrive full |
+| `margin` | 5 s | How much cheaper another car must be to take a call over |
+| `interval` | 1 s | How often calls are priced again |
+| `idle_delay` | 3 s | Idle time before a car looks for a better place to wait |
+| `min_gain` | 6 s | Improvement needed to move an idle car |
+| `recheck` | 30 s | How often an idle car looks again |
+| `half_life` | 600 s | How fast the call history fades |
+| `prior` | 0.05 | Share of the estimate spread evenly over all floors |
+
+### Where it's approximate
+
+- Each leg of a route is timed from standing still, so a car already moving is a little slower in
+  the estimate than in fact.
+- Every stop is taken as one person getting on or off; a stop where 8 people board takes longer.
+- Riders are spread evenly over the lit floor buttons, which is off when most are going to one floor.
+- Calls are assigned one at a time. Future calls only come in through parking, and reassignment
+  fixes some choices after the fact.
+- It doesn't know where people are going. Destination dispatch would: real drop-off floors in
+  place of the even spread, and riders grouped by where they're going.

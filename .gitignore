@@ -8,3 +8,4 @@ data/
 # desktop app build output (packaging/elevator-sim.spec)
 build/
 dist/
+/ElevatorSimulator.exe
